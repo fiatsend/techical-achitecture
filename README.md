@@ -6,6 +6,11 @@ This repository contains Fiatsend’s technical architecture documentation for i
 
 - **SCF #41 — Integration Track**: [`Fiatsend-Technical-Architecture-SCF41-Integration.md`](./Fiatsend-Technical-Architecture-SCF41-Integration.md)
 
+## Budget + deeper dive (supporting docs)
+
+- **SCF #41 Integration budget (spreadsheet)**: [Fiatsend-SCF41-Integration-Budget-98k](https://docs.google.com/spreadsheets/d/1jMvARRxdBvZ_Wk2_2V1ncMwiOPEjkVvK/edit?usp=sharing&ouid=116734387907050013778&rtpof=true&sd=true)
+- **More detailed architecture (Google Doc)**: [Fiatsend - Technical Architecture](https://docs.google.com/document/d/1oT5Ydl6UaGXqF9cLsIUQ8ClcWD3Ugx6p/edit?usp=sharing&ouid=116734387907050013778&rtpof=true&sd=true)
+
 ## What Fiatsend is building (high level)
 
 - **Phone-number-first UX** for Stellar: phone login + account abstraction patterns, mapping phone identifiers to on-chain accounts.

@@ -278,6 +278,8 @@ contract PaymentLink {
 | T2 | Weeks 9–14 (by May 2026) | Anchor Platform (SEP-31), DeFindex, Blend | Staging cross-border receive + yield vaults + payment routing |
 | T3 | Weeks 15–18 (by Jun 2026) | All | Mainnet launch, production yield, user testing, documentation |
 
+**Budget breakdown:** [Fiatsend-SCF41-Integration-Budget-98k (Google Sheet)](https://docs.google.com/spreadsheets/d/1jMvARRxdBvZ_Wk2_2V1ncMwiOPEjkVvK/edit?usp=sharing&ouid=116734387907050013778&rtpof=true&sd=true)
+
 ---
 
 ## 10. How This Benefits the Stellar Ecosystem
@@ -296,3 +298,5 @@ contract PaymentLink {
 - **SEP-24 (Hosted Deposit & Withdrawal)**: `https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0024.md`
 - **SEP-31 (Cross-Border Payments)**: `https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0031.md`
 - **Anchor Platform docs**: `https://developers.stellar.org/docs/platforms/anchor-platform`
+- **SCF #41 Integration budget**: `https://docs.google.com/spreadsheets/d/1jMvARRxdBvZ_Wk2_2V1ncMwiOPEjkVvK/edit?usp=sharing&ouid=116734387907050013778&rtpof=true&sd=true`
+- **More detailed architecture doc**: `https://docs.google.com/document/d/1oT5Ydl6UaGXqF9cLsIUQ8ClcWD3Ugx6p/edit?usp=sharing&ouid=116734387907050013778&rtpof=true&sd=true`
