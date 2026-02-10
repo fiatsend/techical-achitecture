@@ -3,7 +3,7 @@
 _Status_: Living document (implementation details will evolve during delivery)  
 _Last updated_: 2026-02-08
 
-This doc is focused on integration. For more detailed architecture check: [Fiatsend - Technical Architecture](https://docs.google.com/document/d/1oT5Ydl6UaGXqF9cLsIUQ8ClcWD3Ugx6p/edit?usp=sharing&ouid=116734387907050013778&rtpof=true&sd=true)
+This doc is focused on integration. For more detailed architecture check: [Fiatsend - Technical Architecture](https://docs.google.com/document/d/14x4mdXQ7vXiQt7F7KbJ9yt2zbGGmDgf2/edit?usp=sharing&ouid=116734387907050013778&rtpof=true&sd=true)
 
 ## Table of contents
 
