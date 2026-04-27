@@ -28,7 +28,7 @@ Reference scope: [Stellar Community Fund - Fiatsend submission](https://communit
    4.1 What the Off-Ramp Layer Does in Fiatsend  
    4.2 Off-Ramp Payment Flow  
    4.3 Off-Ramp Integration Points  
-   4.4 Multi-Corridor Routing (GHS, NGN, KES)  
+   4.4 Ghana Corridor Routing (GHS)  
    4.5 SEP-38 Quote Flow  
 5. Stellar Disbursement Platform (SDP) - Batch Payouts  
    5.1 What SDP Does in Fiatsend  
@@ -75,9 +75,7 @@ flowchart LR
     Integration --> WK[Stellar Wallets Kit]
     Integration --> Soroban[Soroban Contracts]
     Integration --> Settlement[Local Settlement Engine]
-    Settlement --> Ghana[MoMo/Bank - GHS]
-    Settlement --> Nigeria[Bank/Mobile - NGN]
-    Settlement --> Kenya[Mobile/Bank - KES]
+    Settlement --> Ghana[Mobile Money - GHS]
 ```
 
 ---
@@ -104,7 +102,7 @@ fiatsend-app/
       conversionEscrow.ts
       payoutVerifier.ts
     routing/
-      corridorRouter.ts
+      ghsRoutePolicy.ts
       feePolicy.ts
     events/
       stellarEventNormalizer.ts
@@ -117,7 +115,7 @@ fiatsend-app/
 
 ### 4.1 What the Off-Ramp Layer Does in Fiatsend
 
-The off-ramp integration layer enables regulated settlement from Stellar assets (USDC) into local fiat rails. In Fiatsend, this layer is the programmable bridge from stablecoin liquidity to end-recipient bank/mobile destinations.
+The off-ramp integration layer enables regulated settlement from Stellar assets (USDC) into local fiat rails. In Fiatsend, this layer is the programmable bridge from stablecoin liquidity to end-recipient mobile money destinations.
 
 ### 4.2 Off-Ramp Payment Flow
 
@@ -129,7 +127,7 @@ sequenceDiagram
     participant OffRamp as Off-Ramp API (SEP)
     participant Rail as Local Settlement Rail
 
-    User->>API: Request off-ramp (asset, amount, corridor)
+    User->>API: Request off-ramp (asset, amount, GHS route)
     API->>SEP38: Get quote (send/receive amounts)
     SEP38-->>API: firm quote + expiry
     API->>OffRamp: Create off-ramp transfer
@@ -144,20 +142,15 @@ sequenceDiagram
 - Quote acquisition and verification (`SEP-38`).
 - Transfer initiation and status tracking (`SEP transfer endpoints`).
 - Webhook callback processing and status reconciliation in `fiatsend-functions`.
-- Corridor-specific compliance and payout rule validation before off-ramp submission.
+- GHS route compliance and payout rule validation before off-ramp submission.
 
-### 4.4 Multi-Corridor Routing (GHS, NGN, KES)
+### 4.4 Ghana Corridor Routing (GHS)
 
 ```mermaid
 flowchart TD
-    A[Off-ramp Request] --> B{Corridor}
-    B -->|GHS| C[Ghana Route Policy]
-    B -->|NGN| D[Nigeria Route Policy]
-    B -->|KES| E[Kenya Route Policy]
-    C --> F[Off-Ramp Transfer Builder]
-    D --> F
-    E --> F
-    F --> G[Execute via Off-Ramp Layer]
+    A[Off-ramp Request] --> B[GHS Route Policy]
+    B --> C[Off-Ramp Transfer Builder]
+    C --> D[Execute via Off-Ramp Layer]
 ```
 
 ### 4.5 SEP-38 Quote Flow
@@ -276,7 +269,7 @@ Fiatsend uses a unified model across wallet bindings, quote snapshots, payout ba
 - `sdp_batches`
 - `sdp_batch_items`
 - `soroban_contract_events`
-- `corridor_route_policies`
+- `ghs_route_policies`
 
 ---
 
@@ -331,7 +324,7 @@ Fiatsend uses a unified model across wallet bindings, quote snapshots, payout ba
 - staged rollout:
   - tranche 1: testnet wallet + payment intent,
   - tranche 2: testnet off-ramp + SDP batches,
-  - tranche 3: guarded mainnet launch with corridor ramp-up.
+  - tranche 3: guarded mainnet launch with GHS volume ramp-up.
 
 ---
 
@@ -408,7 +401,6 @@ flowchart LR
 
     LGR --> SET[Local Settlement Engine]
     SET --> MM[Mobile Money Rails]
-    SET --> BNK[Bank Rails]
 
     LGR --> WH[Merchant Webhooks]
     LGR --> C
