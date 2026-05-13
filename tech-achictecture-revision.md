@@ -12,7 +12,8 @@ The design aligns with the SCF #43 scope for:
 
 1. Stellar Wallets Kit integration for merchant wallet connection and payment acceptance.
 2. Stellar Disbursement Platform (SDP) integration for single and bulk business payouts.
-3. Preservation of Fiatsend's existing local settlement rails (mobile money payout workflows).
+3. Stellar Anchor Platform (SEP-24) integration for hosted deposit/withdraw and transfer lifecycle.
+4. Preservation of Fiatsend's existing local settlement rails (mobile money payout workflows).
 
 Reference scope: [Stellar Community Fund - Fiatsend submission](https://communityfund.stellar.org/dashboard/submissions/recZ23IC37puouoSd)
 
@@ -24,10 +25,10 @@ Reference scope: [Stellar Community Fund - Fiatsend submission](https://communit
 2. System Architecture Overview  
 3. Integration Layer Architecture  
    3.1 New Module Structure  
-4. Off-Ramp Integration Layer - SEP-Compliant Conversion and Settlement  
-   4.1 What the Off-Ramp Layer Does in Fiatsend  
+4. Stellar Anchor Platform Integration - SEP-24 Conversion and Settlement  
+   4.1 What the Anchor Platform Layer Does in Fiatsend  
    4.2 Off-Ramp Payment Flow  
-   4.3 Off-Ramp Integration Points  
+   4.3 Anchor Platform Integration Points  
    4.4 Ghana Corridor Routing (GHS)  
    4.5 SEP-38 Quote Flow  
 5. Stellar Disbursement Platform (SDP) - Batch Payouts  
@@ -70,9 +71,10 @@ flowchart LR
     Consumer[Consumer App User] --> Main[Fiatsend app]
     Console --> Integration[Fiatsend Integration Layer]
     Main --> Integration
-    Integration --> OffRamp[Off-Ramp Integration Layer]
+    Integration --> AP[Stellar Anchor Platform (SEP-24)]
     Integration --> SDP[Stellar Disbursement Platform]
     Integration --> WK[Stellar Wallets Kit]
+    AP --> Settlement[Local Settlement Engine]
     Integration --> Settlement[Local Settlement Engine]
     Settlement --> Ghana[Mobile Money - GHS]
 ```
@@ -93,7 +95,7 @@ The integration layer sits between Fiatsend product surfaces and Stellar ecosyst
 ```text
 fiatsend-app/
   src/lib/stellar/
-    offRampClient.ts
+    anchorPlatformClient.ts
     sep38Quotes.ts
     sdpClient.ts
     walletsKitAdapter.ts
@@ -107,11 +109,11 @@ fiatsend-app/
 
 ---
 
-## 4) Off-Ramp Integration Layer - SEP-Compliant Conversion and Settlement
+## 4) Stellar Anchor Platform Integration - SEP-24 Conversion and Settlement
 
-### 4.1 What the Off-Ramp Layer Does in Fiatsend
+### 4.1 What the Anchor Platform Layer Does in Fiatsend
 
-The off-ramp integration layer enables regulated settlement from Stellar assets (USDC) into local fiat rails. In Fiatsend, this layer is the programmable bridge from stablecoin liquidity to end-recipient mobile money destinations.
+The Anchor Platform integration layer enables regulated settlement from Stellar assets (USDC) into local fiat rails using SEP-24 hosted deposit/withdraw and transfer lifecycle APIs. In Fiatsend, this layer is the programmable bridge from stablecoin liquidity to end-recipient mobile money destinations.
 
 ### 4.2 Off-Ramp Payment Flow
 
@@ -120,34 +122,36 @@ sequenceDiagram
     participant User as Consumer or Merchant
     participant API as Fiatsend Orchestration API
     participant SEP38 as Quote Service (SEP-38)
-    participant OffRamp as Off-Ramp API (SEP)
+    participant Anchor as Stellar Anchor Platform (SEP-24)
     participant Rail as Local Settlement Rail
 
     User->>API: Request off-ramp (asset, amount, GHS route)
     API->>SEP38: Get quote (send/receive amounts)
     SEP38-->>API: firm quote + expiry
-    API->>OffRamp: Create off-ramp transfer
-    OffRamp-->>API: transfer id + pending state
-    OffRamp->>Rail: Execute payout
-    Rail-->>OffRamp: settlement result
-    OffRamp-->>API: completed/failed webhook
+    API->>Anchor: Create SEP-24 transfer/transaction
+    Anchor-->>API: transfer id + pending state
+    Anchor->>Rail: Execute payout
+    Rail-->>Anchor: settlement result
+    Anchor-->>API: completed/failed webhook
 ```
 
-### 4.3 Off-Ramp Integration Points
+### 4.3 Anchor Platform Integration Points
 
 - Quote acquisition and verification (`SEP-38`).
-- Transfer initiation and status tracking (`SEP transfer endpoints`).
+- Transfer initiation and status tracking (`SEP-24 transfer endpoints`).
 - Webhook callback processing and status reconciliation in `fiatsend-functions`.
-- GHS route compliance and payout rule validation before off-ramp submission.
+- GHS route compliance and payout rule validation before anchor submission.
 
 ### 4.4 Ghana Corridor Routing (GHS)
 
 ```mermaid
 flowchart TD
     A[Off-ramp Request] --> B[GHS Route Policy]
-    B --> C[Off-Ramp Transfer Builder]
-    C --> D[Execute via Off-Ramp Layer]
+    B --> C[Anchor Transfer Builder]
+    C --> D[Execute via Stellar Anchor Platform]
 ```
+
+Corridor strategy: Fiatsend integrates with a GHS-capable anchor provider for settlement (example provider: Yellow Card), with provider routing and failover managed by Fiatsend policies.
 
 ### 4.5 SEP-38 Quote Flow
 
@@ -305,7 +309,7 @@ Fiatsend uses a unified model across wallet bindings, quote snapshots, payout ba
 ## 11) Infrastructure and Deployment
 
 - `Fiatsend console`: UI releases with feature flags by partner cohort.
-- `Fiatsend app`: orchestration APIs for wallet, off-ramp, and SDP adapters.
+- `Fiatsend app`: orchestration APIs for wallet, anchor platform, off-ramp, and SDP adapters.
 - `fiatsend-functions`: callback and reconciliation workers, backoff retries, DLQ processors.
 - staged rollout:
   - tranche 1: testnet wallet + payment intent,
@@ -319,7 +323,7 @@ Fiatsend uses a unified model across wallet bindings, quote snapshots, payout ba
 - **Frontend**: React/TypeScript (`Fiatsend console`, `Fiatsend app`)
 - **Backend orchestration**: Next.js API routes + Node services
 - **Async processing**: Firebase Functions scheduled and webhook workers
-- **Stellar integrations**: Wallets Kit, SEP-compliant off-ramp APIs, SDP
+- **Stellar integrations**: Wallets Kit, Stellar Anchor Platform (SEP-24), SEP-compliant off-ramp APIs, SDP
 - **Data and audit**: existing Fiatsend DB + event/audit records + reconciliation jobs
 
 ---
@@ -373,12 +377,14 @@ flowchart LR
     M --> O
 
     O --> WK[Stellar Wallets Kit Adapter]
+    O --> AP[Stellar Anchor Platform Adapter]
     O --> SDP[Stellar Disbursement Adapter]
     O --> LGR[Fiatsend Ledger Service]
     O --> CMP[Compliance Service]
     O --> EV[Event Bus / Outbox]
 
     WK --> ST[Stellar Network]
+    AP --> ST
     SDP --> ST
 
     EV --> FN[fiatsend-functions Workers]
@@ -421,6 +427,7 @@ flowchart LR
 ### 5.4 External dependencies
 
 - Stellar Wallets Kit for merchant wallet session/connectivity.
+- Stellar Anchor Platform (SEP-24) for hosted deposit/withdraw and transfer lifecycle.
 - Stellar Disbursement Platform for disbursement job execution.
 - Stellar network/Horizon/RPC for transaction visibility and confirmations.
 - Existing local payout partners for fiat settlement.
