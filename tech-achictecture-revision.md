@@ -71,11 +71,11 @@ flowchart LR
     Consumer[Consumer App User] --> Main[Fiatsend app]
     Console --> Integration[Fiatsend Integration Layer]
     Main --> Integration
-    Integration --> AP[Stellar Anchor Platform (SEP-24)]
+    Integration --> AP[Stellar Anchor Platform SEP24]
     Integration --> SDP[Stellar Disbursement Platform]
     Integration --> WK[Stellar Wallets Kit]
     AP --> Settlement[Local Settlement Engine]
-    Integration --> Settlement[Local Settlement Engine]
+    Integration --> Settlement
     Settlement --> Ghana[Mobile Money - GHS]
 ```
 
@@ -122,7 +122,7 @@ sequenceDiagram
     participant User as Consumer or Merchant
     participant API as Fiatsend Orchestration API
     participant SEP38 as Quote Service (SEP-38)
-    participant Anchor as Stellar Anchor Platform (SEP-24)
+    participant Anchor as Stellar Anchor Platform SEP24
     participant Rail as Local Settlement Rail
 
     User->>API: Request off-ramp (asset, amount, GHS route)
