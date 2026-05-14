@@ -17,22 +17,11 @@ The design aligns with the SCF #43 scope for:
 
 Reference scope: [Stellar Community Fund - Fiatsend submission](https://communityfund.stellar.org/dashboard/submissions/recZ23IC37puouoSd)
 
-### 1.1) SCF #43 — Reviewer clarifications (resubmission)
-
-Use the same wording in the submission dashboard where space allows.
-
-**Soroban contract scope (escrow / PayoutVerifier)**  
-SCF #43 **does not** include custom Soroban contracts. Any prior mention of escrow or PayoutVerifier is **removed from grant scope**. Delivery relies on **native Stellar transactions**, **Stellar Disbursement Platform (SDP)** for disbursement orchestration, and **SEP-24 / SEP-38** (Anchor Platform–style hosted deposit, withdraw, and transfer lifecycle) for the regulated conversion and settlement path. Soroban-only ideas stay on a **post–SCF #43 backlog** and would only be pursued with a proven gap that SEP-24 + SDP + off-chain controls cannot cover, plus dedicated smart-contract engineering and an independent audit—not on this grant’s critical path.
-
-**SDP deployment model, anchor strategy, and on-chain → mobile-money close**  
-For SCF #43, Fiatsend assumes a **self-hosted SDP** stack in Fiatsend-managed cloud, with **separate testnet and mainnet** deployments and full control of webhooks, retries, and reconciliation workers (a hosted SDP service is not assumed on the critical path). For the **local-currency (GHS) leg**, Fiatsend continues to use **regulated anchor / off-ramp capabilities** (SEP-24 transfer lifecycle and SEP-38 quotes) together with **existing mobile-money settlement partners** for last-mile payout after the on-chain/disbursement leg reaches **`onchain_complete`**. **Reconciliation** closes only when both sides are evidenced: persist **Stellar / SDP references** (e.g. disbursement id, `stellar_tx_hash`) and the **mobile-money `local_provider_ref`**, correlated under one internal payout item with immutable audit events; use **`local_settlement_pending`** until the provider confirms success, then **`local_settled`**; scheduled jobs detect drift between chain/SDP-complete records and provider confirmations. See **§9.1** for the full operational breakdown.
-
 ---
 
 ## Table of Contents
 
 1. Executive Brief  
-   1.1 SCF #43 reviewer clarifications (resubmission)  
 2. System Architecture Overview  
 3. Integration Layer Architecture  
    3.1 New Module Structure  
