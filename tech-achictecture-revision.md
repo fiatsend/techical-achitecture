@@ -648,13 +648,13 @@ sequenceDiagram
     API-->>Console: updated dashboard + webhook dispatch
 ```
 
-### 19.1 SDP Deployment Model and Anchor Strategy (SCF43)
+### 19.1 SDP Deployment Model and Anchor Strategy
 
-This section defines the operational model for SEP-24 + SDP in SCF #43 and how local-currency settlement is closed in Fiatsend's ledger.
+This section defines the operational model for SEP-24 + SDP and how local-currency settlement is closed in Fiatsend's ledger.
 
 ### 19.1.1 Deployment model
 
-- **SCF43 model: self-hosted SDP stack by Fiatsend** in a Fiatsend-managed cloud environment (separate testnet and mainnet deployments).
+- **Self-hosted SDP stack by Fiatsend** in a Fiatsend-managed cloud environment (separate testnet and mainnet deployments).
 - **Rationale**:
   - direct control over KYC/compliance integrations and webhook security boundaries,
   - operational control for payout retry/reconciliation workers,
@@ -663,7 +663,7 @@ This section defines the operational model for SEP-24 + SDP in SCF #43 and how l
 
 ### 19.1.2 Anchor strategy for local-currency settlement leg
 
-Fiatsend acts as the business integration layer to a regulated anchor/off-ramp provider that exposes SEP-24 deposit/withdraw and related transfer lifecycle APIs.
+Fiatsend acts as the business integration layer to a regulated anchor/off-ramp provider (Yellowcard/Seevcash) that exposes SEP-24 deposit/withdraw and related transfer lifecycle APIs.
 
 - **On-chain leg**: Stellar asset movement and transaction finality are tracked via SDP and chain observers.
 - **Off-chain local-currency leg**: once payout state reaches `onchain_complete`, Fiatsend triggers mobile-money settlement through its local payout partners.
