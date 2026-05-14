@@ -12,7 +12,8 @@ The design aligns with the SCF #43 scope for:
 
 1. Stellar Wallets Kit integration for merchant wallet connection and payment acceptance.
 2. Stellar Disbursement Platform (SDP) integration for single and bulk business payouts.
-3. Preservation of Fiatsend's existing local settlement rails (mobile money payout workflows).
+3. Stellar Anchor Platform (SEP-24) integration for hosted deposit/withdraw and transfer lifecycle.
+4. Preservation of Fiatsend's existing local settlement rails (mobile money payout workflows).
 
 Reference scope: [Stellar Community Fund - Fiatsend submission](https://communityfund.stellar.org/dashboard/submissions/recZ23IC37puouoSd)
 
@@ -24,10 +25,10 @@ Reference scope: [Stellar Community Fund - Fiatsend submission](https://communit
 2. System Architecture Overview  
 3. Integration Layer Architecture  
    3.1 New Module Structure  
-4. Off-Ramp Integration Layer - SEP-Compliant Conversion and Settlement  
-   4.1 What the Off-Ramp Layer Does in Fiatsend  
+4. Stellar Anchor Platform Integration - SEP-24 Conversion and Settlement  
+   4.1 What the Anchor Platform Layer Does in Fiatsend  
    4.2 Off-Ramp Payment Flow  
-   4.3 Off-Ramp Integration Points  
+   4.3 Anchor Platform Integration Points  
    4.4 Ghana Corridor Routing (GHS)  
    4.5 SEP-38 Quote Flow  
 5. Stellar Disbursement Platform (SDP) - Batch Payouts  
@@ -40,19 +41,57 @@ Reference scope: [Stellar Community Fund - Fiatsend submission](https://communit
    6.2 Wallet Payment Flow  
    6.3 SDK Integration  
    6.4 Wallets Kit Integration Points  
-7. Soroban Smart Contracts - On-Chain Escrow and Verification  
-   7.1 ConversionEscrow Contract  
-   7.2 PayoutVerifier Contract  
-8. Unified Data Model  
-   8.1 New Database Schema Additions  
-9. API Endpoints (New)  
-   9.1 Off-Ramp Endpoints  
-   9.2 SDP Endpoints  
-   9.3 Wallets Kit Endpoints  
-   9.4 Soroban Endpoints  
-10. Security Architecture  
-11. Infrastructure and Deployment  
-12. Technology Stack Summary  
+7. Unified Data Model  
+   7.1 New Database Schema Additions  
+8. API Endpoints (New)  
+   8.1 Off-Ramp Endpoints  
+   8.2 SDP Endpoints  
+   8.3 Wallets Kit Endpoints  
+   8.4 SCF43 Contract Endpoints (None)  
+9. Security Architecture  
+10. Infrastructure and Deployment  
+11. Technology Stack Summary  
+12. Product + Platform Context (Current State)  
+13. Strategic Engineering Principles  
+14. Target Architecture (High-Level)  
+15. Component Ownership by Repository  
+   15.1 `Fiatsend console` (Business UI + B2B API)  
+   15.2 `Fiatsend app` (Core orchestration + consumer app APIs)  
+   15.3 `fiatsend-functions` (Async + integration edges)  
+   15.4 External dependencies  
+16. End-to-End Domain Model  
+17. Wallets Kit Integration Architecture  
+   17.1 Wallet Binding Flow  
+   17.2 Guardrails  
+18. Merchant Payment Flow Architecture (Consumer -> Business)  
+   18.1 Payment intent API contract (proposed)  
+19. SDP Payout Architecture (Business -> Recipient)  
+   19.1 SDP Deployment Model and Anchor Strategy (SCF43)  
+   19.1.1 Deployment model  
+   19.1.2 Anchor strategy for local-currency settlement leg  
+   19.1.3 Reconciliation close process (on-chain -> mobile money)  
+   19.1.4 Operational ownership and capacity  
+20. State Machines (Canonical)  
+   20.1 Payment Intent  
+   20.2 Payout Item  
+21. Reliability, Retry, and Reconciliation  
+   21.1 Outbox + worker model  
+   21.2 Policy  
+22. Security and Compliance Architecture  
+   22.1 Security controls  
+   22.2 Compliance controls  
+23. Observability and Operational Excellence  
+   23.1 Telemetry standards  
+   23.2 Key SLOs  
+24. Environment and Release Strategy  
+   24.1 Tranche delivery mapping  
+25. Engineering Work Breakdown (Implementation Plan)  
+26. Risk Register  
+27. Decision Log (Initial ADRs)  
+28. Success Criteria  
+   28.1 Technical  
+   28.2 Product/Business (aligned to SCF trajectory)  
+29. Conclusion  
 
 ---
 
@@ -70,11 +109,11 @@ flowchart LR
     Consumer[Consumer App User] --> Main[Fiatsend app]
     Console --> Integration[Fiatsend Integration Layer]
     Main --> Integration
-    Integration --> OffRamp[Off-Ramp Integration Layer]
+    Integration --> AP[Stellar Anchor Platform SEP24]
     Integration --> SDP[Stellar Disbursement Platform]
     Integration --> WK[Stellar Wallets Kit]
-    Integration --> Soroban[Soroban Contracts]
-    Integration --> Settlement[Local Settlement Engine]
+    AP --> Settlement[Local Settlement Engine]
+    Integration --> Settlement
     Settlement --> Ghana[Mobile Money - GHS]
 ```
 
@@ -94,13 +133,10 @@ The integration layer sits between Fiatsend product surfaces and Stellar ecosyst
 ```text
 fiatsend-app/
   src/lib/stellar/
-    offRampClient.ts
+    anchorPlatformClient.ts
     sep38Quotes.ts
     sdpClient.ts
     walletsKitAdapter.ts
-    soroban/
-      conversionEscrow.ts
-      payoutVerifier.ts
     routing/
       ghsRoutePolicy.ts
       feePolicy.ts
@@ -111,11 +147,11 @@ fiatsend-app/
 
 ---
 
-## 4) Off-Ramp Integration Layer - SEP-Compliant Conversion and Settlement
+## 4) Stellar Anchor Platform Integration - SEP-24 Conversion and Settlement
 
-### 4.1 What the Off-Ramp Layer Does in Fiatsend
+### 4.1 What the Anchor Platform Layer Does in Fiatsend
 
-The off-ramp integration layer enables regulated settlement from Stellar assets (USDC) into local fiat rails. In Fiatsend, this layer is the programmable bridge from stablecoin liquidity to end-recipient mobile money destinations.
+The Anchor Platform integration layer enables regulated settlement from Stellar assets (USDC) into local fiat rails using SEP-24 hosted deposit/withdraw and transfer lifecycle APIs. In Fiatsend, this layer is the programmable bridge from stablecoin liquidity to end-recipient mobile money destinations.
 
 ### 4.2 Off-Ramp Payment Flow
 
@@ -124,34 +160,36 @@ sequenceDiagram
     participant User as Consumer or Merchant
     participant API as Fiatsend Orchestration API
     participant SEP38 as Quote Service (SEP-38)
-    participant OffRamp as Off-Ramp API (SEP)
+    participant Anchor as Stellar Anchor Platform SEP24
     participant Rail as Local Settlement Rail
 
     User->>API: Request off-ramp (asset, amount, GHS route)
     API->>SEP38: Get quote (send/receive amounts)
     SEP38-->>API: firm quote + expiry
-    API->>OffRamp: Create off-ramp transfer
-    OffRamp-->>API: transfer id + pending state
-    OffRamp->>Rail: Execute payout
-    Rail-->>OffRamp: settlement result
-    OffRamp-->>API: completed/failed webhook
+    API->>Anchor: Create SEP-24 transfer/transaction
+    Anchor-->>API: transfer id + pending state
+    Anchor->>Rail: Execute payout
+    Rail-->>Anchor: settlement result
+    Anchor-->>API: completed/failed webhook
 ```
 
-### 4.3 Off-Ramp Integration Points
+### 4.3 Anchor Platform Integration Points
 
 - Quote acquisition and verification (`SEP-38`).
-- Transfer initiation and status tracking (`SEP transfer endpoints`).
+- Transfer initiation and status tracking (`SEP-24 transfer endpoints`).
 - Webhook callback processing and status reconciliation in `fiatsend-functions`.
-- GHS route compliance and payout rule validation before off-ramp submission.
+- GHS route compliance and payout rule validation before anchor submission.
 
 ### 4.4 Ghana Corridor Routing (GHS)
 
 ```mermaid
 flowchart TD
     A[Off-ramp Request] --> B[GHS Route Policy]
-    B --> C[Off-Ramp Transfer Builder]
-    C --> D[Execute via Off-Ramp Layer]
+    B --> C[Anchor Transfer Builder]
+    C --> D[Execute via Stellar Anchor Platform]
 ```
+
+Corridor strategy: Fiatsend integrates with a GHS-capable anchor provider for USDC - GHS settlement (Yellow Card / Seevcash), with provider routing and failover managed by Fiatsend policies.
 
 ### 4.5 SEP-38 Quote Flow
 
@@ -230,83 +268,51 @@ sequenceDiagram
 
 ---
 
-## 7) Soroban Smart Contracts - On-Chain Escrow and Verification
-
-### 7.1 ConversionEscrow Contract
-
-- Holds funds during conversion/off-ramp execution window.
-- Enforces deterministic fee split and release conditions.
-- Prevents unauthorized release by requiring policy-verified settlement path.
-
-Core methods:
-
-- `init_escrow(escrow_id, payer, merchant, asset, amount, expiry)`
-- `release_escrow(escrow_id, fee_bps, treasury)`
-- `refund_escrow(escrow_id)`
-
-### 7.2 PayoutVerifier Contract
-
-- Verifies payout batch intent and approval thresholds for high-risk tiers.
-- Pins payout batch hash and prevents duplicate or tampered batch releases.
-
-Core methods:
-
-- `register_batch(batch_id, merkle_root, total_amount, required_signers)`
-- `approve_batch(batch_id, signer)`
-- `mark_executed(batch_id, execution_ref)`
-
----
-
-## 8) Unified Data Model
+## 7) Unified Data Model
 
 Fiatsend uses a unified model across wallet bindings, quote snapshots, payout batches, item-level statuses, and settlement outcomes.
 
-### 8.1 New Database Schema Additions
+### 7.1 New Database Schema Additions
 
 - `stellar_wallet_bindings`
 - `offramp_quotes`
 - `offramp_transfers`
 - `sdp_batches`
 - `sdp_batch_items`
-- `soroban_contract_events`
 - `ghs_route_policies`
 
 ---
 
-## 9) API Endpoints (New)
+## 8) API Endpoints (New)
 
-### 9.1 Off-Ramp Endpoints
+### 8.1 Off-Ramp Endpoints
 
 - `POST /api/stellar/offramp/quotes`
 - `POST /api/stellar/offramp/transfers`
 - `GET /api/stellar/offramp/transfers/:id`
 - `POST /api/stellar/offramp/webhook`
 
-### 9.2 SDP Endpoints
+### 8.2 SDP Endpoints
 
 - `POST /api/stellar/sdp/batches`
 - `GET /api/stellar/sdp/batches/:batchId`
 - `POST /api/stellar/sdp/webhook`
 - `POST /api/stellar/sdp/batches/:batchId/retry`
 
-### 9.3 Wallets Kit Endpoints
+### 8.3 Wallets Kit Endpoints
 
 - `POST /api/stellar/wallets/bind`
 - `POST /api/stellar/wallets/verify-signature`
 - `GET /api/stellar/wallets/:businessId`
 - `POST /api/stellar/wallets/unbind`
 
-### 9.4 Soroban Endpoints
+### 8.4 SCF43 Contract Endpoints (None)
 
-- `POST /api/stellar/soroban/escrow/init`
-- `POST /api/stellar/soroban/escrow/release`
-- `POST /api/stellar/soroban/escrow/refund`
-- `POST /api/stellar/soroban/payouts/register`
-- `POST /api/stellar/soroban/payouts/approve`
+- No custom Soroban endpoints are in SCF #43 implementation scope.
 
 ---
 
-## 10) Security Architecture
+## 9) Security Architecture
 
 - strict environment isolation (`testnet` vs `mainnet` secrets and routes),
 - signed webhook verification and replay windows,
@@ -316,10 +322,10 @@ Fiatsend uses a unified model across wallet bindings, quote snapshots, payout ba
 
 ---
 
-## 11) Infrastructure and Deployment
+## 10) Infrastructure and Deployment
 
 - `Fiatsend console`: UI releases with feature flags by partner cohort.
-- `Fiatsend app`: orchestration APIs for wallet, off-ramp, SDP, and Soroban adapters.
+- `Fiatsend app`: orchestration APIs for wallet, anchor platform, off-ramp, and SDP adapters.
 - `fiatsend-functions`: callback and reconciliation workers, backoff retries, DLQ processors.
 - staged rollout:
   - tranche 1: testnet wallet + payment intent,
@@ -328,17 +334,17 @@ Fiatsend uses a unified model across wallet bindings, quote snapshots, payout ba
 
 ---
 
-## 12) Technology Stack Summary
+## 11) Technology Stack Summary
 
 - **Frontend**: React/TypeScript (`Fiatsend console`, `Fiatsend app`)
 - **Backend orchestration**: Next.js API routes + Node services
 - **Async processing**: Firebase Functions scheduled and webhook workers
-- **Stellar integrations**: Wallets Kit, SEP-compliant off-ramp APIs, SDP, Soroban contracts
+- **Stellar integrations**: Wallets Kit, Stellar Anchor Platform (SEP-24), SEP-compliant off-ramp APIs, SDP
 - **Data and audit**: existing Fiatsend DB + event/audit records + reconciliation jobs
 
 ---
 
-## 2) Product + Platform Context (Current State)
+## 12) Product + Platform Context (Current State)
 
 Fiatsend already operates a dual surface:
 
@@ -361,7 +367,7 @@ The Stellar program should extend this architecture, not replace it.
 
 ---
 
-## 3) Strategic Engineering Principles
+## 13) Strategic Engineering Principles
 
 1. **Event-driven reliability over synchronous coupling**
    - Frontends should never wait for chain finality; status must be asynchronous.
@@ -376,7 +382,7 @@ The Stellar program should extend this architecture, not replace it.
 
 ---
 
-## 4) Target Architecture (High-Level)
+## 14) Target Architecture (High-Level)
 
 ```mermaid
 flowchart LR
@@ -387,12 +393,14 @@ flowchart LR
     M --> O
 
     O --> WK[Stellar Wallets Kit Adapter]
+    O --> AP[Stellar Anchor Platform Adapter]
     O --> SDP[Stellar Disbursement Adapter]
     O --> LGR[Fiatsend Ledger Service]
     O --> CMP[Compliance Service]
     O --> EV[Event Bus / Outbox]
 
     WK --> ST[Stellar Network]
+    AP --> ST
     SDP --> ST
 
     EV --> FN[fiatsend-functions Workers]
@@ -409,9 +417,9 @@ flowchart LR
 
 ---
 
-## 5) Component Ownership by Repository
+## 15) Component Ownership by Repository
 
-### 5.1 `Fiatsend console` (Business UI + B2B API)
+### 15.1 `Fiatsend console` (Business UI + B2B API)
 
 - Wallet connection UX using Stellar Wallets Kit.
 - Merchant wallet profile screen (address, network, trustline, balance).
@@ -419,29 +427,30 @@ flowchart LR
 - Status dashboard:
   - `draft`, `queued`, `onchain_pending`, `onchain_complete`, `local_settled`, `failed`.
 
-### 5.2 `Fiatsend app` (Core orchestration + consumer app APIs)
+### 15.2 `Fiatsend app` (Core orchestration + consumer app APIs)
 
 - Merchant payment intent resolution from QR/link.
 - Consumer pay flow orchestration and payment state normalization.
 - Internal APIs for ledger writes, settlement routing, and webhook dispatch.
 - Shared auth/session and risk policy enforcement.
 
-### 5.3 `fiatsend-functions` (Async + integration edges)
+### 15.3 `fiatsend-functions` (Async + integration edges)
 
 - Webhook handlers (chain/disbursement/provider callbacks).
 - Reconciliation workers and retry queues.
 - Scheduled consistency checks for stale in-flight operations.
 
-### 5.4 External dependencies
+### 15.4 External dependencies
 
 - Stellar Wallets Kit for merchant wallet session/connectivity.
+- Stellar Anchor Platform (SEP-24) for hosted deposit/withdraw and transfer lifecycle.
 - Stellar Disbursement Platform for disbursement job execution.
 - Stellar network/Horizon/RPC for transaction visibility and confirmations.
 - Existing local payout partners for fiat settlement.
 
 ---
 
-## 6) End-to-End Domain Model
+## 16) End-to-End Domain Model
 
 ```mermaid
 erDiagram
@@ -519,9 +528,9 @@ erDiagram
 
 ---
 
-## 7) Wallets Kit Integration Architecture
+## 17) Wallets Kit Integration Architecture
 
-### 7.1 Wallet Binding Flow
+### 17.1 Wallet Binding Flow
 
 ```mermaid
 sequenceDiagram
@@ -542,7 +551,7 @@ sequenceDiagram
     API-->>UI: binding status + network + capabilities
 ```
 
-### 7.2 Guardrails
+### 17.2 Guardrails
 
 - One active wallet binding per business/environment by default.
 - Require explicit rebind flow with cooldown and audit trail.
@@ -551,7 +560,7 @@ sequenceDiagram
 
 ---
 
-## 8) Merchant Payment Flow Architecture (Consumer -> Business)
+## 18) Merchant Payment Flow Architecture (Consumer -> Business)
 
 ```mermaid
 sequenceDiagram
@@ -579,7 +588,7 @@ sequenceDiagram
     Ledger-->>Console: Real-time status update
 ```
 
-### 8.1 Payment intent API contract (proposed)
+### 18.1 Payment intent API contract (proposed)
 
 - `POST /api/merchant/payment-intents`
   - Input: `businessId`, `amount`, `assetCode`, `memo`, `terminalRef`
@@ -594,7 +603,7 @@ sequenceDiagram
 
 ---
 
-## 9) SDP Payout Architecture (Business -> Recipient)
+## 19) SDP Payout Architecture (Business -> Recipient)
 
 ```mermaid
 flowchart TD
@@ -639,171 +648,59 @@ sequenceDiagram
     API-->>Console: updated dashboard + webhook dispatch
 ```
 
-## 9.1) Soroban Smart Contract Architecture (Detailed)
+### 19.1 SDP Deployment Model and Anchor Strategy
 
-The first submission feedback was correct: Wallets Kit + SDP alone explain connectivity and disbursement operations, but they do not fully justify when Fiatsend requires deterministic on-chain business logic. This section defines exactly where Soroban is needed and where it is intentionally not used.
+This section defines the operational model for SEP-24 + SDP and how local-currency settlement is closed in Fiatsend's ledger.
 
-### 9.1.1 Contract scope decision (what belongs on Soroban)
+### 19.1.1 Deployment model
 
-| Capability | Off-chain only? | Soroban needed? | Reason |
-|---|---|---|---|
-| Wallet connect/session | Yes | No | Wallet session is UI/client concern handled by Wallets Kit. |
-| Raw transfer execution | Yes | No | Stellar native transfer path already exists; no custom logic needed. |
-| Merchant payment intent integrity (amount/expiry/reference) | Partial | Yes | On-chain intent hash prevents tampering and enables trust-minimized verification. |
-| Merchant fee split/escrow release rules | No | Yes | Deterministic settlement rules should be enforceable on-chain and auditable. |
-| Multi-actor payout approvals (treasury controls) | No | Yes | Soroban policy contract enforces threshold and role logic before release. |
-| FX conversion rate source-of-truth | No | Partial | Keep pricing/oracles off-chain; only commit signed quote hash on-chain for auditability. |
-| Local mobile-money settlement | Yes | No | Local rails are off-chain; Soroban stores linkage references only. |
+- **Self-hosted SDP stack by Fiatsend** in a Fiatsend-managed cloud environment (separate testnet and mainnet deployments).
+- **Rationale**:
+  - direct control over KYC/compliance integrations and webhook security boundaries,
+  - operational control for payout retry/reconciliation workers,
+  - reduced dependency risk during milestone execution.
+- **Hosted SDP option** remains a future optimization, but is not assumed in SCF43 critical path.
 
-### 9.1.2 Proposed Soroban contract set
+### 19.1.2 Anchor strategy for local-currency settlement leg
 
-```mermaid
-flowchart LR
-    PI[PaymentIntent Contract] --> ES[EscrowSettlement Contract]
-    FX[QuoteCommit Contract] --> ES
-    PA[PayoutApproval Policy Contract] --> ES
-    ES --> EVT[(Soroban Events)]
-    EVT --> IDX[Fiatsend Indexer in functions]
-    IDX --> LED[Fiatsend Ledger + Console Status]
-```
+Fiatsend acts as the business integration layer to a regulated anchor/off-ramp provider (Yellowcard/Seevcash) that exposes SEP-24 deposit/withdraw and related transfer lifecycle APIs.
 
-#### Contract A: `PaymentIntent` (merchant payment commitments)
+- **On-chain leg**: Stellar asset movement and transaction finality are tracked via SDP and chain observers.
+- **Off-chain local-currency leg**: once payout state reaches `onchain_complete`, Fiatsend triggers mobile-money settlement through its local payout partners.
+- **Status model**: Fiatsend keeps on-chain and local settlement statuses distinct (`onchain_complete` is not equal to `local_settled`).
 
-- **Purpose**
-  - Register immutable payment intent commitment from merchant:
-    - merchant address
-    - asset
-    - amount
-    - expiry
-    - external reference hash (`intent_id`)
-- **Necessity**
-  - Prevent altered QR/link parameters between creation and payment.
-  - Provide chain-verifiable proof that the paid amount matched merchant-issued intent.
-- **State**
-  - `intent_hash -> IntentRecord{merchant, asset, amount, expiry, status}`
-- **Events**
-  - `IntentCreated`
-  - `IntentSettled`
-  - `IntentExpired`
+### 19.1.3 Reconciliation close process (on-chain -> mobile money)
 
-#### Contract B: `EscrowSettlement` (programmable release + fee split)
+Fiatsend closes reconciliation using a dual-reference approach:
 
-- **Purpose**
-  - Hold funds temporarily and release according to deterministic rules:
-    - merchant settlement amount
-    - Fiatsend fee
-    - optional partner fee share
-- **Necessity**
-  - Fee/revenue logic should be transparent, immutable, and reproducible for audits.
-- **State**
-  - `escrow_id -> EscrowRecord{payer, merchant, amount, fee_bps, release_state}`
-- **Events**
-  - `EscrowFunded`
-  - `EscrowReleased`
-  - `EscrowRefunded`
+1. persist `stellar_tx_hash` / disbursement reference from SDP,
+2. persist `local_provider_ref` from mobile-money rail,
+3. correlate both under one internal payout item ID and immutable audit event chain.
 
-#### Contract C: `PayoutApprovalPolicy` (risk/treasury controls)
+Closure rules:
 
-- **Purpose**
-  - Enforce approval workflow before disbursement release for large or risky batches.
-- **Necessity**
-  - Reduces key-man risk; prevents unilateral high-value payout execution.
-- **State**
-  - `batch_id -> ApprovalState{required_signers, approvals, status}`
-- **Events**
-  - `ApprovalRequested`
-  - `ApprovalRecorded`
-  - `ApprovalSatisfied`
+- Move to `local_settled` only when:
+  - on-chain state is final/complete, and
+  - local settlement provider confirms success.
+- Keep `local_settlement_pending` if only one side is complete.
+- Move to `local_failed` and manual operations queue on timeout/terminal provider failure.
+- Run scheduled reconciliation to detect drift between:
+  - SDP/chain-complete records and
+  - local provider settlement confirmations.
 
-#### Contract D: `QuoteCommit` (signed quote anchoring)
+### 19.1.4 Operational ownership and capacity
 
-- **Purpose**
-  - Store hash of signed FX quote used for conversion accounting.
-- **Necessity**
-  - Creates immutable proof of exact quote terms accepted at transaction time.
-- **State**
-  - `quote_id -> QuoteCommit{quote_hash, signer, expiry}`
-- **Events**
-  - `QuoteCommitted`
-  - `QuoteConsumed`
+- `fiatsend-app`: API orchestration, idempotency, and payout state transitions.
+- `fiatsend-functions`: webhook ingestion, retries, dead-letter processing, and scheduled reconciliation.
+- Operations/compliance: exception queue handling and settlement break resolution.
 
-### 9.1.3 Contract interaction sequence
-
-```mermaid
-sequenceDiagram
-    participant Biz as Merchant
-    participant API as Fiatsend API
-    participant PI as PaymentIntent Contract
-    participant ES as EscrowSettlement Contract
-    participant APP as Consumer
-    participant IDX as Fiatsend Indexer
-    participant LGR as Ledger
-
-    Biz->>API: Create payment request
-    API->>PI: create_intent(intent_hash, amount, expiry)
-    PI-->>API: IntentCreated
-    API-->>APP: QR/link payload
-
-    APP->>ES: pay_to_escrow(intent_hash, amount)
-    ES->>PI: verify_intent(intent_hash)
-    ES-->>ES: enforce amount/expiry checks
-    ES-->>API: EscrowFunded
-
-    API->>ES: release_funds(escrow_id, fee_bps)
-    ES-->>IDX: EscrowReleased event
-    IDX->>LGR: update onchain_complete + accounting split
-```
-
-### 9.1.4 Soroban interface sketch (illustrative)
-
-```rust
-pub trait PaymentIntentContract {
-    fn create_intent(env: Env, intent_hash: BytesN<32>, merchant: Address, asset: Address, amount: i128, expiry_ledger: u32);
-    fn settle_intent(env: Env, intent_hash: BytesN<32>, tx_ref: BytesN<32>);
-    fn get_intent(env: Env, intent_hash: BytesN<32>) -> IntentRecord;
-}
-
-pub trait EscrowSettlementContract {
-    fn fund(env: Env, escrow_id: BytesN<32>, payer: Address, merchant: Address, asset: Address, amount: i128, intent_hash: BytesN<32>);
-    fn release(env: Env, escrow_id: BytesN<32>, fee_bps: u32, fee_wallet: Address);
-    fn refund(env: Env, escrow_id: BytesN<32>);
-}
-```
-
-### 9.1.5 Boundaries with SDP and existing Fiatsend services
-
-- **Soroban contracts**
-  - Enforce immutable payment/policy rules and emit canonical on-chain events.
-- **SDP**
-  - Executes disbursement operations and lifecycle updates for payout rails.
-- **Fiatsend off-chain services**
-  - Compliance, KYB/KYC, sanctions checks, local settlement, customer notifications, reporting.
-
-This separation avoids overloading contracts with off-chain concerns while still making business-critical payment logic verifiable and non-repudiable.
-
-### 9.1.6 MVP vs later-phase Soroban rollout
-
-- **Tranche 1**
-  - Deploy `PaymentIntent` only on testnet; validate immutable intent flow.
-- **Tranche 2**
-  - Add `EscrowSettlement` and limited `QuoteCommit`; test payout-linked accounting.
-- **Tranche 3**
-  - Enable `PayoutApprovalPolicy` for high-value merchant cohorts on mainnet.
-
-### 9.1.7 Why this directly addresses rejection feedback
-
-The rejected version lacked clear justification. The updated design now explicitly identifies:
-
-1. which logic remains off-chain and why,
-2. which logic moves to Soroban and why,
-3. exact contract responsibilities, state, and events,
-4. staged adoption path to minimize delivery risk.
+No smart-contract engineering capacity is required for SCF43 delivery under this model.
 
 ---
 
-## 10) State Machines (Canonical)
+## 20) State Machines (Canonical)
 
-### 10.1 Payment Intent
+### 20.1 Payment Intent
 
 ```mermaid
 stateDiagram-v2
@@ -818,7 +715,7 @@ stateDiagram-v2
     expired --> [*]
 ```
 
-### 10.2 Payout Item
+### 20.2 Payout Item
 
 ```mermaid
 stateDiagram-v2
@@ -837,9 +734,9 @@ stateDiagram-v2
 
 ---
 
-## 11) Reliability, Retry, and Reconciliation
+## 21) Reliability, Retry, and Reconciliation
 
-### 11.1 Outbox + worker model
+### 21.1 Outbox + worker model
 
 ```mermaid
 flowchart LR
@@ -852,7 +749,7 @@ flowchart LR
     WRK --> DLQ[(Dead Letter Queue)]
 ```
 
-### 11.2 Policy
+### 21.2 Policy
 
 - Exponential retry with jitter for transient network/provider failures.
 - Hard failure thresholds route items into manual operations queue.
@@ -863,9 +760,9 @@ flowchart LR
 
 ---
 
-## 12) Security and Compliance Architecture
+## 22) Security and Compliance Architecture
 
-### 12.1 Security controls
+### 22.1 Security controls
 
 - **AuthN/AuthZ**: partner role + status gates already used in console APIs.
 - **Data protection**:
@@ -879,7 +776,7 @@ flowchart LR
 - **Operational security**:
   - 2FA mandatory for production payout operators.
 
-### 12.2 Compliance controls
+### 22.2 Compliance controls
 
 - KYB level gates max payout amount, batch size, and daily velocity.
 - Rule-engine decision records persisted with rule version metadata.
@@ -887,9 +784,9 @@ flowchart LR
 
 ---
 
-## 13) Observability and Operational Excellence
+## 23) Observability and Operational Excellence
 
-### 13.1 Telemetry standards
+### 23.1 Telemetry standards
 
 - Correlation IDs propagated from UI request -> orchestration -> worker -> external provider.
 - Structured events by domain:
@@ -898,7 +795,7 @@ flowchart LR
   - `payout.batch.*`, `payout.item.*`
   - `settlement.*`
 
-### 13.2 Key SLOs
+### 23.2 Key SLOs
 
 - Payment finalization p95 (intent submission -> final state) <= 2 minutes.
 - Payout status freshness p95 (external update -> console visible) <= 30 seconds.
@@ -907,7 +804,7 @@ flowchart LR
 
 ---
 
-## 14) Environment and Release Strategy
+## 24) Environment and Release Strategy
 
 ```mermaid
 flowchart LR
@@ -917,7 +814,7 @@ flowchart LR
     P1 --> P2[Mainnet General Availability]
 ```
 
-### 14.1 Tranche delivery mapping
+### 24.1 Tranche delivery mapping
 
 - **Tranche 1 (MVP)**
   - Wallets Kit connect flow in console.
@@ -936,7 +833,7 @@ flowchart LR
 
 ---
 
-## 15) Engineering Work Breakdown (Implementation Plan)
+## 25) Engineering Work Breakdown (Implementation Plan)
 
 ### Stream A: Wallets + Merchant Payments
 
@@ -963,7 +860,7 @@ flowchart LR
 
 ---
 
-## 16) Risk Register
+## 26) Risk Register
 
 | Risk | Impact | Mitigation |
 |---|---|---|
@@ -975,7 +872,7 @@ flowchart LR
 
 ---
 
-## 17) Decision Log (Initial ADRs)
+## 27) Decision Log (Initial ADRs)
 
 1. **ADR-001: Async-first orchestration**
    - Use worker-driven finalization; API requests return accepted state quickly.
@@ -988,22 +885,22 @@ flowchart LR
 
 ---
 
-## 18) Success Criteria
+## 28) Success Criteria
 
-### Technical
+### 28.1 Technical
 
 - >= 99% successful payment intent finalization in pilot cohort.
 - >= 98% payout batch item completion excluding external rail downtime windows.
 - <= 0.1% reconciliation variance on daily close.
 
-### Product/Business (aligned to SCF trajectory)
+### 28.2 Product/Business (aligned to SCF trajectory)
 
-- At least 3 businesses with active mainnet Stellar wallet bindings.
-- At least 10 real production payment/payout transactions.
-- At least 1 successful batch payout using Stellar rails with visible local settlement completion.
+- At least 25 businesses with active mainnet Stellar wallet bindings.
+- At least 100 real production payment/payout transactions.
+- At least 1 successful batch payout ($5k min) using Stellar rails with visible local settlement completion.
 
 ---
 
-## 19) Conclusion
+## 29) Conclusion
 
 This architecture uses Fiatsend's current strengths (existing console controls, consumer UX, and asynchronous backend workers) to deliver a practical, production-safe Stellar rollout. The design is intentionally execution-oriented: clear ownership by repository, deterministic state models, robust reconciliation, and phased delivery gates aligned to SCF milestones.
