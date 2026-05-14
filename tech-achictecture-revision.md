@@ -41,19 +41,57 @@ Reference scope: [Stellar Community Fund - Fiatsend submission](https://communit
    6.2 Wallet Payment Flow  
    6.3 SDK Integration  
    6.4 Wallets Kit Integration Points  
-7. SCF43 Scope Decision - No Custom Soroban Contracts  
-   7.1 Scope Boundary and Rationale  
-   7.2 Deferred Contract Backlog (Post-SCF43)  
-8. Unified Data Model  
-   8.1 New Database Schema Additions  
-9. API Endpoints (New)  
-   9.1 Off-Ramp Endpoints  
-   9.2 SDP Endpoints  
-   9.3 Wallets Kit Endpoints  
-   9.4 SCF43 Contract Endpoints (None)  
-10. Security Architecture  
-11. Infrastructure and Deployment  
-12. Technology Stack Summary  
+7. Unified Data Model  
+   7.1 New Database Schema Additions  
+8. API Endpoints (New)  
+   8.1 Off-Ramp Endpoints  
+   8.2 SDP Endpoints  
+   8.3 Wallets Kit Endpoints  
+   8.4 SCF43 Contract Endpoints (None)  
+9. Security Architecture  
+10. Infrastructure and Deployment  
+11. Technology Stack Summary  
+12. Product + Platform Context (Current State)  
+13. Strategic Engineering Principles  
+14. Target Architecture (High-Level)  
+15. Component Ownership by Repository  
+   15.1 `Fiatsend console` (Business UI + B2B API)  
+   15.2 `Fiatsend app` (Core orchestration + consumer app APIs)  
+   15.3 `fiatsend-functions` (Async + integration edges)  
+   15.4 External dependencies  
+16. End-to-End Domain Model  
+17. Wallets Kit Integration Architecture  
+   17.1 Wallet Binding Flow  
+   17.2 Guardrails  
+18. Merchant Payment Flow Architecture (Consumer -> Business)  
+   18.1 Payment intent API contract (proposed)  
+19. SDP Payout Architecture (Business -> Recipient)  
+   19.1 SDP Deployment Model and Anchor Strategy (SCF43)  
+   19.1.1 Deployment model  
+   19.1.2 Anchor strategy for local-currency settlement leg  
+   19.1.3 Reconciliation close process (on-chain -> mobile money)  
+   19.1.4 Operational ownership and capacity  
+20. State Machines (Canonical)  
+   20.1 Payment Intent  
+   20.2 Payout Item  
+21. Reliability, Retry, and Reconciliation  
+   21.1 Outbox + worker model  
+   21.2 Policy  
+22. Security and Compliance Architecture  
+   22.1 Security controls  
+   22.2 Compliance controls  
+23. Observability and Operational Excellence  
+   23.1 Telemetry standards  
+   23.2 Key SLOs  
+24. Environment and Release Strategy  
+   24.1 Tranche delivery mapping  
+25. Engineering Work Breakdown (Implementation Plan)  
+26. Risk Register  
+27. Decision Log (Initial ADRs)  
+28. Success Criteria  
+   28.1 Technical  
+   28.2 Product/Business (aligned to SCF trajectory)  
+29. Conclusion  
 
 ---
 
@@ -151,7 +189,7 @@ flowchart TD
     C --> D[Execute via Stellar Anchor Platform]
 ```
 
-Corridor strategy: Fiatsend integrates with a GHS-capable anchor provider for settlement (example provider: Yellow Card), with provider routing and failover managed by Fiatsend policies.
+Corridor strategy: Fiatsend integrates with a GHS-capable anchor provider for USDC - GHS settlement (Yellow Card / Seevcash), with provider routing and failover managed by Fiatsend policies.
 
 ### 4.5 SEP-38 Quote Flow
 
@@ -230,33 +268,11 @@ sequenceDiagram
 
 ---
 
-## 7) SCF43 Scope Decision - No Custom Soroban Contracts
-
-### 7.1 Scope Boundary and Rationale
-
-For SCF #43 delivery, Fiatsend will not build or deploy custom Soroban contracts (including previously proposed escrow and payout-verifier contracts). The implementation will rely on native Stellar transaction flows, SEP-24 hosted deposit/withdraw workflows, and SDP disbursement orchestration.
-
-This scope boundary is intentional and addresses Stellar feedback directly:
-
-- SEP-24 + SDP already cover the required off-ramp and payout lifecycle for this phase.
-- Local-currency payout execution and compliance logic are operationally off-chain concerns handled by Fiatsend services and settlement partners.
-- Contract development, audit, and operations would require dedicated smart-contract engineering and security capacity that is not allocated inside SCF #43 milestones.
-
-### 7.2 Deferred Contract Backlog (Post-SCF43)
-
-Fiatsend may evaluate Soroban contracts in a post-grant phase only if a concrete gap is proven that cannot be addressed by SEP-24 + SDP + off-chain controls (for example, enforceable on-chain multi-party treasury release). Any such phase would require:
-
-- explicit requirements and threat model,
-- dedicated Soroban team capacity and independent security audit,
-- separate rollout and risk controls outside SCF #43 critical path.
-
----
-
-## 8) Unified Data Model
+## 7) Unified Data Model
 
 Fiatsend uses a unified model across wallet bindings, quote snapshots, payout batches, item-level statuses, and settlement outcomes.
 
-### 8.1 New Database Schema Additions
+### 7.1 New Database Schema Additions
 
 - `stellar_wallet_bindings`
 - `offramp_quotes`
@@ -267,36 +283,36 @@ Fiatsend uses a unified model across wallet bindings, quote snapshots, payout ba
 
 ---
 
-## 9) API Endpoints (New)
+## 8) API Endpoints (New)
 
-### 9.1 Off-Ramp Endpoints
+### 8.1 Off-Ramp Endpoints
 
 - `POST /api/stellar/offramp/quotes`
 - `POST /api/stellar/offramp/transfers`
 - `GET /api/stellar/offramp/transfers/:id`
 - `POST /api/stellar/offramp/webhook`
 
-### 9.2 SDP Endpoints
+### 8.2 SDP Endpoints
 
 - `POST /api/stellar/sdp/batches`
 - `GET /api/stellar/sdp/batches/:batchId`
 - `POST /api/stellar/sdp/webhook`
 - `POST /api/stellar/sdp/batches/:batchId/retry`
 
-### 9.3 Wallets Kit Endpoints
+### 8.3 Wallets Kit Endpoints
 
 - `POST /api/stellar/wallets/bind`
 - `POST /api/stellar/wallets/verify-signature`
 - `GET /api/stellar/wallets/:businessId`
 - `POST /api/stellar/wallets/unbind`
 
-### 9.4 SCF43 Contract Endpoints (None)
+### 8.4 SCF43 Contract Endpoints (None)
 
 - No custom Soroban endpoints are in SCF #43 implementation scope.
 
 ---
 
-## 10) Security Architecture
+## 9) Security Architecture
 
 - strict environment isolation (`testnet` vs `mainnet` secrets and routes),
 - signed webhook verification and replay windows,
@@ -306,7 +322,7 @@ Fiatsend uses a unified model across wallet bindings, quote snapshots, payout ba
 
 ---
 
-## 11) Infrastructure and Deployment
+## 10) Infrastructure and Deployment
 
 - `Fiatsend console`: UI releases with feature flags by partner cohort.
 - `Fiatsend app`: orchestration APIs for wallet, anchor platform, off-ramp, and SDP adapters.
@@ -318,7 +334,7 @@ Fiatsend uses a unified model across wallet bindings, quote snapshots, payout ba
 
 ---
 
-## 12) Technology Stack Summary
+## 11) Technology Stack Summary
 
 - **Frontend**: React/TypeScript (`Fiatsend console`, `Fiatsend app`)
 - **Backend orchestration**: Next.js API routes + Node services
@@ -328,7 +344,7 @@ Fiatsend uses a unified model across wallet bindings, quote snapshots, payout ba
 
 ---
 
-## 2) Product + Platform Context (Current State)
+## 12) Product + Platform Context (Current State)
 
 Fiatsend already operates a dual surface:
 
@@ -351,7 +367,7 @@ The Stellar program should extend this architecture, not replace it.
 
 ---
 
-## 3) Strategic Engineering Principles
+## 13) Strategic Engineering Principles
 
 1. **Event-driven reliability over synchronous coupling**
    - Frontends should never wait for chain finality; status must be asynchronous.
@@ -366,7 +382,7 @@ The Stellar program should extend this architecture, not replace it.
 
 ---
 
-## 4) Target Architecture (High-Level)
+## 14) Target Architecture (High-Level)
 
 ```mermaid
 flowchart LR
@@ -401,9 +417,9 @@ flowchart LR
 
 ---
 
-## 5) Component Ownership by Repository
+## 15) Component Ownership by Repository
 
-### 5.1 `Fiatsend console` (Business UI + B2B API)
+### 15.1 `Fiatsend console` (Business UI + B2B API)
 
 - Wallet connection UX using Stellar Wallets Kit.
 - Merchant wallet profile screen (address, network, trustline, balance).
@@ -411,20 +427,20 @@ flowchart LR
 - Status dashboard:
   - `draft`, `queued`, `onchain_pending`, `onchain_complete`, `local_settled`, `failed`.
 
-### 5.2 `Fiatsend app` (Core orchestration + consumer app APIs)
+### 15.2 `Fiatsend app` (Core orchestration + consumer app APIs)
 
 - Merchant payment intent resolution from QR/link.
 - Consumer pay flow orchestration and payment state normalization.
 - Internal APIs for ledger writes, settlement routing, and webhook dispatch.
 - Shared auth/session and risk policy enforcement.
 
-### 5.3 `fiatsend-functions` (Async + integration edges)
+### 15.3 `fiatsend-functions` (Async + integration edges)
 
 - Webhook handlers (chain/disbursement/provider callbacks).
 - Reconciliation workers and retry queues.
 - Scheduled consistency checks for stale in-flight operations.
 
-### 5.4 External dependencies
+### 15.4 External dependencies
 
 - Stellar Wallets Kit for merchant wallet session/connectivity.
 - Stellar Anchor Platform (SEP-24) for hosted deposit/withdraw and transfer lifecycle.
@@ -434,7 +450,7 @@ flowchart LR
 
 ---
 
-## 6) End-to-End Domain Model
+## 16) End-to-End Domain Model
 
 ```mermaid
 erDiagram
@@ -512,9 +528,9 @@ erDiagram
 
 ---
 
-## 7) Wallets Kit Integration Architecture
+## 17) Wallets Kit Integration Architecture
 
-### 7.1 Wallet Binding Flow
+### 17.1 Wallet Binding Flow
 
 ```mermaid
 sequenceDiagram
@@ -535,7 +551,7 @@ sequenceDiagram
     API-->>UI: binding status + network + capabilities
 ```
 
-### 7.2 Guardrails
+### 17.2 Guardrails
 
 - One active wallet binding per business/environment by default.
 - Require explicit rebind flow with cooldown and audit trail.
@@ -544,7 +560,7 @@ sequenceDiagram
 
 ---
 
-## 8) Merchant Payment Flow Architecture (Consumer -> Business)
+## 18) Merchant Payment Flow Architecture (Consumer -> Business)
 
 ```mermaid
 sequenceDiagram
@@ -572,7 +588,7 @@ sequenceDiagram
     Ledger-->>Console: Real-time status update
 ```
 
-### 8.1 Payment intent API contract (proposed)
+### 18.1 Payment intent API contract (proposed)
 
 - `POST /api/merchant/payment-intents`
   - Input: `businessId`, `amount`, `assetCode`, `memo`, `terminalRef`
@@ -587,7 +603,7 @@ sequenceDiagram
 
 ---
 
-## 9) SDP Payout Architecture (Business -> Recipient)
+## 19) SDP Payout Architecture (Business -> Recipient)
 
 ```mermaid
 flowchart TD
@@ -632,11 +648,11 @@ sequenceDiagram
     API-->>Console: updated dashboard + webhook dispatch
 ```
 
-## 9.1) SDP Deployment Model and Anchor Strategy (SCF43)
+### 19.1 SDP Deployment Model and Anchor Strategy (SCF43)
 
 This section defines the operational model for SEP-24 + SDP in SCF #43 and how local-currency settlement is closed in Fiatsend's ledger.
 
-### 9.1.1 Deployment model
+### 19.1.1 Deployment model
 
 - **SCF43 model: self-hosted SDP stack by Fiatsend** in a Fiatsend-managed cloud environment (separate testnet and mainnet deployments).
 - **Rationale**:
@@ -645,7 +661,7 @@ This section defines the operational model for SEP-24 + SDP in SCF #43 and how l
   - reduced dependency risk during milestone execution.
 - **Hosted SDP option** remains a future optimization, but is not assumed in SCF43 critical path.
 
-### 9.1.2 Anchor strategy for local-currency settlement leg
+### 19.1.2 Anchor strategy for local-currency settlement leg
 
 Fiatsend acts as the business integration layer to a regulated anchor/off-ramp provider that exposes SEP-24 deposit/withdraw and related transfer lifecycle APIs.
 
@@ -653,7 +669,7 @@ Fiatsend acts as the business integration layer to a regulated anchor/off-ramp p
 - **Off-chain local-currency leg**: once payout state reaches `onchain_complete`, Fiatsend triggers mobile-money settlement through its local payout partners.
 - **Status model**: Fiatsend keeps on-chain and local settlement statuses distinct (`onchain_complete` is not equal to `local_settled`).
 
-### 9.1.3 Reconciliation close process (on-chain -> mobile money)
+### 19.1.3 Reconciliation close process (on-chain -> mobile money)
 
 Fiatsend closes reconciliation using a dual-reference approach:
 
@@ -672,7 +688,7 @@ Closure rules:
   - SDP/chain-complete records and
   - local provider settlement confirmations.
 
-### 9.1.4 Operational ownership and capacity
+### 19.1.4 Operational ownership and capacity
 
 - `fiatsend-app`: API orchestration, idempotency, and payout state transitions.
 - `fiatsend-functions`: webhook ingestion, retries, dead-letter processing, and scheduled reconciliation.
@@ -682,9 +698,9 @@ No smart-contract engineering capacity is required for SCF43 delivery under this
 
 ---
 
-## 10) State Machines (Canonical)
+## 20) State Machines (Canonical)
 
-### 10.1 Payment Intent
+### 20.1 Payment Intent
 
 ```mermaid
 stateDiagram-v2
@@ -699,7 +715,7 @@ stateDiagram-v2
     expired --> [*]
 ```
 
-### 10.2 Payout Item
+### 20.2 Payout Item
 
 ```mermaid
 stateDiagram-v2
@@ -718,9 +734,9 @@ stateDiagram-v2
 
 ---
 
-## 11) Reliability, Retry, and Reconciliation
+## 21) Reliability, Retry, and Reconciliation
 
-### 11.1 Outbox + worker model
+### 21.1 Outbox + worker model
 
 ```mermaid
 flowchart LR
@@ -733,7 +749,7 @@ flowchart LR
     WRK --> DLQ[(Dead Letter Queue)]
 ```
 
-### 11.2 Policy
+### 21.2 Policy
 
 - Exponential retry with jitter for transient network/provider failures.
 - Hard failure thresholds route items into manual operations queue.
@@ -744,9 +760,9 @@ flowchart LR
 
 ---
 
-## 12) Security and Compliance Architecture
+## 22) Security and Compliance Architecture
 
-### 12.1 Security controls
+### 22.1 Security controls
 
 - **AuthN/AuthZ**: partner role + status gates already used in console APIs.
 - **Data protection**:
@@ -760,7 +776,7 @@ flowchart LR
 - **Operational security**:
   - 2FA mandatory for production payout operators.
 
-### 12.2 Compliance controls
+### 22.2 Compliance controls
 
 - KYB level gates max payout amount, batch size, and daily velocity.
 - Rule-engine decision records persisted with rule version metadata.
@@ -768,9 +784,9 @@ flowchart LR
 
 ---
 
-## 13) Observability and Operational Excellence
+## 23) Observability and Operational Excellence
 
-### 13.1 Telemetry standards
+### 23.1 Telemetry standards
 
 - Correlation IDs propagated from UI request -> orchestration -> worker -> external provider.
 - Structured events by domain:
@@ -779,7 +795,7 @@ flowchart LR
   - `payout.batch.*`, `payout.item.*`
   - `settlement.*`
 
-### 13.2 Key SLOs
+### 23.2 Key SLOs
 
 - Payment finalization p95 (intent submission -> final state) <= 2 minutes.
 - Payout status freshness p95 (external update -> console visible) <= 30 seconds.
@@ -788,7 +804,7 @@ flowchart LR
 
 ---
 
-## 14) Environment and Release Strategy
+## 24) Environment and Release Strategy
 
 ```mermaid
 flowchart LR
@@ -798,7 +814,7 @@ flowchart LR
     P1 --> P2[Mainnet General Availability]
 ```
 
-### 14.1 Tranche delivery mapping
+### 24.1 Tranche delivery mapping
 
 - **Tranche 1 (MVP)**
   - Wallets Kit connect flow in console.
@@ -817,7 +833,7 @@ flowchart LR
 
 ---
 
-## 15) Engineering Work Breakdown (Implementation Plan)
+## 25) Engineering Work Breakdown (Implementation Plan)
 
 ### Stream A: Wallets + Merchant Payments
 
@@ -844,7 +860,7 @@ flowchart LR
 
 ---
 
-## 16) Risk Register
+## 26) Risk Register
 
 | Risk | Impact | Mitigation |
 |---|---|---|
@@ -856,7 +872,7 @@ flowchart LR
 
 ---
 
-## 17) Decision Log (Initial ADRs)
+## 27) Decision Log (Initial ADRs)
 
 1. **ADR-001: Async-first orchestration**
    - Use worker-driven finalization; API requests return accepted state quickly.
@@ -869,22 +885,22 @@ flowchart LR
 
 ---
 
-## 18) Success Criteria
+## 28) Success Criteria
 
-### Technical
+### 28.1 Technical
 
 - >= 99% successful payment intent finalization in pilot cohort.
 - >= 98% payout batch item completion excluding external rail downtime windows.
 - <= 0.1% reconciliation variance on daily close.
 
-### Product/Business (aligned to SCF trajectory)
+### 28.2 Product/Business (aligned to SCF trajectory)
 
-- At least 3 businesses with active mainnet Stellar wallet bindings.
-- At least 10 real production payment/payout transactions.
-- At least 1 successful batch payout using Stellar rails with visible local settlement completion.
+- At least 25 businesses with active mainnet Stellar wallet bindings.
+- At least 100 real production payment/payout transactions.
+- At least 1 successful batch payout ($5k min) using Stellar rails with visible local settlement completion.
 
 ---
 
-## 19) Conclusion
+## 29) Conclusion
 
 This architecture uses Fiatsend's current strengths (existing console controls, consumer UX, and asynchronous backend workers) to deliver a practical, production-safe Stellar rollout. The design is intentionally execution-oriented: clear ownership by repository, deterministic state models, robust reconciliation, and phased delivery gates aligned to SCF milestones.
