@@ -306,10 +306,6 @@ Fiatsend uses a unified model across wallet bindings, quote snapshots, payout ba
 - `GET /api/stellar/wallets/:businessId`
 - `POST /api/stellar/wallets/unbind`
 
-### 8.4 SCF43 Contract Endpoints (None)
-
-- No custom Soroban endpoints are in SCF #43 implementation scope.
-
 ---
 
 ## 9) Security Architecture
