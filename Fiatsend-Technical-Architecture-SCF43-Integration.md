@@ -46,8 +46,7 @@ Reference scope: [Stellar Community Fund - Fiatsend submission](https://communit
 8. API Endpoints (New)  
    8.1 Off-Ramp Endpoints  
    8.2 SDP Endpoints  
-   8.3 Wallets Kit Endpoints  
-   8.4 SCF43 Contract Endpoints (None)  
+   8.3 Wallets Kit Endpoints
 9. Security Architecture  
 10. Infrastructure and Deployment  
 11. Technology Stack Summary  
