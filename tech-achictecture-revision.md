@@ -189,7 +189,7 @@ flowchart TD
     C --> D[Execute via Stellar Anchor Platform]
 ```
 
-Corridor strategy: Fiatsend integrates with a GHS-capable anchor provider for USDC - GHS settlement (Yellow Card / Seevcash), with provider routing and failover managed by Fiatsend policies.
+Corridor strategy: Fiatsend integrates with a GHS-capable anchor provider for USDC - GHS settlement (via MoneyGram), with provider routing and failover managed by Fiatsend policies.
 
 ### 4.5 SEP-38 Quote Flow
 
@@ -663,7 +663,7 @@ This section defines the operational model for SEP-24 + SDP and how local-curren
 
 ### 19.1.2 Anchor strategy for local-currency settlement leg
 
-Fiatsend acts as the business integration layer to a regulated anchor/off-ramp provider (Yellowcard/Seevcash) that exposes SEP-24 deposit/withdraw and related transfer lifecycle APIs.
+Fiatsend acts as the business integration layer to a regulated anchor/off-ramp provider (via MoneyGram) that exposes SEP-24 deposit/withdraw and related transfer lifecycle APIs.
 
 - **On-chain leg**: Stellar asset movement and transaction finality are tracked via SDP and chain observers.
 - **Off-chain local-currency leg**: once payout state reaches `onchain_complete`, Fiatsend triggers mobile-money settlement through its local payout partners.
