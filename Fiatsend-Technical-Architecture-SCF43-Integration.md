@@ -658,7 +658,7 @@ This section defines the operational model for SEP-24 + SDP and how local-curren
 
 ### 19.1.2 Anchor strategy for local-currency settlement leg
 
-Fiatsend acts as the business integration layer to a regulated anchor/off-ramp provider (Yellowcard/Seevcash) that exposes SEP-24 deposit/withdraw and related transfer lifecycle APIs.
+Fiatsend acts as the business integration layer to a regulated anchor/off-ramp provider (Moneygram) that exposes SEP-24 deposit/withdraw and related transfer lifecycle APIs.
 
 - **On-chain leg**: Stellar asset movement and transaction finality are tracked via SDP and chain observers.
 - **Off-chain local-currency leg**: once payout state reaches `onchain_complete`, Fiatsend triggers mobile-money settlement through its local payout partners.
