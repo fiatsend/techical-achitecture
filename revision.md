@@ -1333,13 +1333,3 @@ This architecture extends Fiatsend's production payout platform with Stellar Wal
 The design is suitable for Fiatsend's current product direction. Priority before mainnet: tighten the integration boundary between the live Partner API and new Stellar components—especially ledger writes, state transitions, webhook reliability, reconciliation jobs, and operator runbooks.
 
 ---
-
-## Appendix A) Architecture Review Notes (May 2026)
-
-External review (Austin) confirmed directional fit and recommended the tightenings incorporated above:
-
-- Preserve local settlement rails alongside Stellar components.
-- Make `onchain_complete` vs `local_settled` separation explicit (customer promise = mobile money delivery).
-- Map production API objects to ledger/Stellar state machines.
-- Strengthen stuck-state handling, webhook security, payment tx verification, SDP ops controls, and production security checklist.
-- Document Ledger Service as canonical source of truth for merchant-visible state.
