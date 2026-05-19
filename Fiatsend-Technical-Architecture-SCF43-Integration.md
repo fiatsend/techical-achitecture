@@ -15,8 +15,6 @@ The design aligns with the SCF #43 scope for:
 3. Stellar Anchor Platform (SEP-24) integration for hosted deposit/withdraw and transfer lifecycle.
 4. Preservation of Fiatsend's existing local settlement rails (mobile money payout workflows).
 
-Reference scope: [Stellar Community Fund - Fiatsend submission](https://communityfund.stellar.org/dashboard/submissions/recZ23IC37puouoSd)
-
 ---
 
 ## Table of Contents
