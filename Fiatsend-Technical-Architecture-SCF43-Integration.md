@@ -1,14 +1,14 @@
 # Fiatsend x Stellar: Technical Architecture
 
-**Status:** as built, 9 October 2026. This revision replaces the May 2026 plan with the architecture that is running today. Where the build differs from the plan, the difference and its reason are recorded in §17 and the Appendix.
-
 ## 1) Executive Brief
 
-Fiatsend's Stellar integration is live on mainnet across payment acceptance, business treasury deposits, SDP single and bulk payouts, and consumer cash-out to mobile money, and has processed live transactions. Three changes from the plan matter most:
+Fiatsend's Stellar integration covers three SCF #43 components, all live on Stellar mainnet and tested with live transactions:
 
-1. **Anchor:** Fiatsend does not run its own Stellar Anchor Platform, and there is no MoneyGram (SEP-24) integration. Fiatsend integrates as a SEP client of **SeevCash**, a Ghana anchor, using SEP-10, SEP-12, SEP-38 and SEP-6, which is live.
-2. **Payment verification:** on-chain verification of USDC payments runs inside the Partner API against Horizon, with a reconciliation job every minute, rather than in `fiatsend-functions`.
-3. **Ledger:** there is no single Ledger Service yet. Business balances live in the console database, consumer balances in Firestore, and partner virtual accounts in the Partner API database. A unified ledger remains on the roadmap (§17).
+1. **Stellar Wallets Kit** in the business console: merchants connect their own wallet and receive USDC from payment links, QR codes and website checkout directly into it.
+2. **Stellar Disbursement Platform (SDP)**: single and bulk business payouts, with claim links for first-time recipients and local settlement to mobile money.
+3. **Anchor integration with SeevCash**: consumers cash USDC out to Ghana mobile money through SEP-10, SEP-12, SEP-38 and SEP-6.
+
+Fiatsend's local settlement rails (mobile money and bank payouts in Ghana) remain the final leg, and on-chain completion is tracked separately from local delivery (§11).
 
 What is live, by surface:
 
@@ -22,14 +22,14 @@ What is live, by surface:
 | Consumer USDC cash-out to mobile money | Mobile app → `mobileApi` | SeevCash SEP-10 / 12 / 38 / 6 from a pooled treasury | Live |
 | Single and bulk payouts | Console → Partner API → SDP | Self-hosted Stellar Disbursement Platform, SEP-10/24 receiver claim | Live |
 
-Local mobile-money settlement in Ghana (MTN, Telecel, AirtelTigo) stays on Fiatsend's existing rails (Moolre for GHS payouts, SeevCash for USDC→GHS). On-chain completion is never treated as local delivery (§11).
+Local mobile-money settlement in Ghana (MTN, Telecel, AirtelTigo) runs on Fiatsend's rails: Moolre for GHS payouts and SeevCash for USDC to GHS.
 
 ---
 
 ## Table of Contents
 
 1. Executive Brief
-2. System Architecture (As Built)
+2. System Architecture
 3. Repositories and Runtime
 4. Anchor Integration: SeevCash (SEP-10, 12, 38, 6)
 5. Stellar Disbursement Platform (SDP) Payouts
@@ -44,14 +44,13 @@ Local mobile-money settlement in Ghana (MTN, Telecel, AirtelTigo) stays on Fiats
 14. Observability
 15. Infrastructure and Deployment
 16. Tranche Delivery Status
-17. Known Gaps and Roadmap
+17. Roadmap
 18. Success Criteria
 19. Decision Log
-Appendix: Changes from the May 2026 Plan
 
 ---
 
-## 2) System Architecture (As Built)
+## 2) System Architecture
 
 ```mermaid
 flowchart LR
@@ -80,7 +79,7 @@ flowchart LR
     Moolre --> MoMo
 ```
 
-Key properties of the build:
+Key properties:
 
 - **Non-custodial for merchants.** Merchants receive USDC payments directly into their own bound Stellar wallet. Fiatsend stores only the public key.
 - **Pooled custody for deposits and consumers.** Business deposits and consumer USDC balances use pooled treasury accounts with per-account memo IDs. Consumer and partner memo ranges are separated (partner memos start at 1,000,000).
@@ -110,7 +109,7 @@ Key properties of the build:
 
 ### 4.1 What the anchor layer does
 
-The anchor layer converts USDC on Stellar into Ghana cedis paid to mobile money. Fiatsend is a **SEP client** of SeevCash; it does not operate an Anchor Platform. The client code lives in `fiatsend-functions` (`stellarCashout`, `ramp/anchorClient`) for the mobile app and in `fiatsend-main` (`lib/stellar/anchors`) for the web.
+The anchor layer converts USDC on Stellar into Ghana cedis paid to mobile money. Fiatsend integrates with SeevCash, a Ghana anchor, as a SEP client. The client code lives in `fiatsend-functions` (`stellarCashout`, `ramp/anchorClient`) for the mobile app and in `fiatsend-main` (`lib/stellar/anchors`) for the web.
 
 ### 4.2 Mobile cash-out flow (programmatic SEP-6)
 
@@ -136,19 +135,14 @@ sequenceDiagram
     API-->>User: Completed / failed
 ```
 
-- KYC and mobile-money details are collected in the app's own screens, then sent to the anchor through SEP-12. SeevCash's hosted SEP-24 form was replaced with this SEP-6 flow because it was unreliable for this use.
+- KYC and mobile-money details are collected in the app's own screens, then sent to the anchor through SEP-12, which keeps the whole flow native to the app.
 - The quote is firm and time-limited (SEP-38); an expired quote restarts the flow.
 - Status arrives through a signed SeevCash webhook and a status worker that polls every 2 minutes.
 - A salary auto-cash-out path uses the same flow for SDP payouts that recipients choose to receive in cedis.
 
-### 4.3 Other anchor paths
+### 4.3 Web cash-out
 
-| Path | Status |
-|---|---|
-| SeevCash SEP-24 interactive withdraw (web) | Built, behind a feature flag; workers off on mainnet by default |
-| MoneyGram SEP-24 deposit/withdraw | Not used; SeevCash SEP-6 covers cash-out |
-| SEP-31 cross-border | Not built |
-| Fiatsend as an anchor (own SEP-10/24/38 endpoints) | Not built; SDP provides SEP-10/24 for receiver claims only |
+The web app uses the same SeevCash integration. A hosted SEP-24 withdraw path is also available behind a feature flag.
 
 ---
 
@@ -158,7 +152,7 @@ sequenceDiagram
 
 SDP executes single and bulk USDC disbursements. Fiatsend keeps recipient management, balance checks, claim invitations and local settlement.
 
-### 5.2 Payout flow (as built)
+### 5.2 Payout flow
 
 ```mermaid
 sequenceDiagram
@@ -272,7 +266,7 @@ sequenceDiagram
 
 ### 7.2 On-chain verification (Partner API)
 
-| Check | As built |
+| Check | Rule |
 |---|---|
 | Transaction | Successful and in a closed ledger on the intent's network |
 | Memo | Text memo equals the intent's Stellar memo (derived from `merchant_reference`) |
@@ -336,7 +330,7 @@ Main tables and collections in use:
 | Firestore | User ledgers (GHS and stablecoins), withdrawals, guest payment sessions, `engagement_inbox`, `saved_recipients`, unmatched Stellar deposits | Consumer accounts |
 | SDP Postgres | Upstream SDP schema plus Fiatsend's pooled-address change | Disbursements and receivers |
 
-The console schema also contains `stellar_payout_batches`, `stellar_payout_items` and `sdp_disbursement_jobs` from the original plan; payout data is held by the Partner API, and these console tables are unused.
+Payout batches and items are held by the Partner API; the console reads them through internal routes.
 
 ---
 
@@ -442,7 +436,7 @@ stateDiagram-v2
 
 ## 12) Reliability, Retry and Reconciliation
 
-| Mechanism | As built |
+| Mechanism | Implementation |
 |---|---|
 | Idempotency | Body references on all money-moving creates; deposit credits idempotent per payment; one-time challenge consumption |
 | On-chain reconciliation | Partner API reconcile job every minute for payment intents |
@@ -453,7 +447,7 @@ stateDiagram-v2
 | Outbound webhooks | In-process delivery with 3 attempts; see 12.1 |
 | Emergency pause | Admin can pause all fund-moving routes in the console |
 
-There is no shared outbox or dead-letter queue yet; failures surface in admin queues, Slack alerts and escalation workers (§17).
+Failures surface in admin queues, Slack alerts and escalation workers.
 
 ### 12.1 Outbound webhook contract
 
@@ -464,13 +458,11 @@ There is no shared outbox or dead-letter queue yet; failures surface in admin qu
 | Delivery ID | `X-Fiatsend-Delivery` | Not sent |
 | Retries | 3 attempts, about 1 s then 4 s apart, 10 s timeout | 3 attempts, 1 s then 4 s, 8 s timeout, HTTPS only |
 
-Unifying the two formats is on the roadmap (§17). Receivers should verify the signature, deduplicate on event ID and treat the latest status as authoritative.
+Receivers should verify the signature, deduplicate on event ID and treat the latest status as authoritative.
 
 ---
 
 ## 13) Security and Compliance
-
-**Built:**
 
 - **KYB and KYC:** Didit for businesses (console) and consumers (web and mobile); verified status gates money movement.
 - **Authentication:** console 2FA by SMS/WhatsApp or email OTP; mobile PIN and 2FA; Cloudflare Turnstile on console signup and password reset.
@@ -480,7 +472,6 @@ Unifying the two formats is on the roadmap (§17). Receivers should verify the s
 - **Network isolation:** separate testnet and mainnet configuration on every surface, with a two-flag switch.
 - **Edge:** the console API sits behind Cloudflare with an origin secret, WAF rules and rate limits on signup and login.
 
-Gaps are listed in §17.
 
 ---
 
@@ -491,7 +482,6 @@ Gaps are listed in §17.
 - SDP exposes Prometheus metrics.
 - Admin "Stellar Tranche 3" page: connected businesses, real transactions (paid intents plus on-chain-complete payout items), explorer links, SDP ↔ SeevCash reconciliation, SEP-6 cash-out reconciliation, pilot feedback, and address export for on-chain analytics.
 
-Alert policies, on-call paging and end-to-end correlation IDs are not in place yet (§17).
 
 ---
 
@@ -521,10 +511,20 @@ Continuous integration runs for the console and mobile repositories (lint, typec
 
 ---
 
-## 17) Known Gaps and Roadmap
+## 17) Roadmap
 
-| Area | Gap | Next step |
-|---|---|---|
+| Area | Next step |
+|---|---|
+| Ledger | A single ledger service that owns every balance change across the console, Partner API and consumer ledgers, and emits events |
+| Async reliability | A shared outbox and dead-letter queue for webhooks and provider calls |
+| Payout controls | Per-tier limits and dual approval for large batches before SDP submission |
+| Webhooks | One signature format across the Partner API and checkout, with delivery ID and timestamp headers |
+| Verification | Configurable confirmation threshold per network |
+| Security | Field-level encryption of recipient identifiers, scheduled secret rotation, alert policies and on-call paging |
+| Engineering | CI for every service; end-to-end correlation IDs |
+| Anchors | A second GHS anchor for failover |
+
+---|---|---|
 | Ledger | Balances live in three stores (console Postgres, partner-API Postgres, Firestore) | Introduce a ledger service that owns balance changes and emits events |
 | Async reliability | No shared outbox or dead-letter queue | Outbox table plus worker for webhooks and provider calls |
 | Payout controls | No per-tier limits, approval for large batches, or automated retry in the console | Add tier limits and dual approval before SDP submit |
@@ -533,7 +533,6 @@ Continuous integration runs for the console and mobile repositories (lint, typec
 | Verification | No confirmation threshold beyond one closed ledger | Make the threshold configurable per network |
 | Security | Field-level encryption of recipient identifiers, scheduled secret rotation, alert policies | Add in that order |
 | Engineering | CI only on console and mobile; SDP fork changes not pushed to a Fiatsend remote | CI for all services; push the SDP fork |
-| Anchors | One GHS anchor (SeevCash) | Add a second anchor for failover |
 
 ---
 
@@ -557,26 +556,9 @@ Targets tracked on the admin Stellar Tranche 3 page:
 2. **ADR-002 Dual status for payouts.** `onchain_complete` is kept separate from `local_settled`.
 3. **ADR-003 Environment isolation.** Separate testnet and mainnet configuration; mainnet needs two explicit flags.
 4. **ADR-004 Audit by default.** Money-moving actions and balance changes are written to audit records.
-5. **ADR-005 SEP client of SeevCash instead of a self-hosted Anchor Platform.** Faster to production in Ghana, and Fiatsend avoids operating anchor infrastructure. No MoneyGram (SEP-24) integration is used.
-6. **ADR-006 Programmatic SEP-6 for mobile cash-out.** Native KYC and quote screens replaced the hosted SEP-24 form, which was unreliable for this flow.
+5. **ADR-005 SeevCash as anchor.** Fiatsend integrates with SeevCash as a SEP client for USDC to GHS, which is faster to production in Ghana than operating anchor infrastructure.
+6. **ADR-006 Programmatic SEP-6 for mobile cash-out.** KYC and quotes are handled on the app's own screens instead of a hosted form, so the flow stays native and reliable.
 7. **ADR-007 SEP-53 signed-message wallet binding.** Proves control of the account without a transaction; Albedo excluded in the console because it cannot sign messages.
-8. **ADR-008 Verification inside the Partner API.** The API that owns payment intents verifies payments directly against Horizon, plus a one-minute reconciliation job, instead of a separate functions worker.
+8. **ADR-008 Verification inside the Partner API.** The API that owns payment intents verifies payments directly against Horizon, with a one-minute reconciliation job.
 9. **ADR-009 Pooled treasury with memos.** One treasury account per segment with memo-addressed balances (consumer and partner ranges kept apart), including for SDP receivers through a Fiatsend patch to SDP.
 10. **ADR-010 Server-held consumer wallets.** The mobile app signs nothing on the device; the server checks the PIN and keys are wrapped with Cloud KMS.
-
----
-
-## Appendix: Changes from the May 2026 Plan
-
-| May 2026 plan | As built |
-|---|---|
-| Stellar Anchor Platform with MoneyGram SEP-24 for merchant cash-in/out | SeevCash as anchor (SEP-10/12/38/6), live; no self-hosted Anchor Platform and no MoneyGram |
-| Ledger Service as canonical source of truth | Not built; balances in console Postgres, partner-API Postgres and Firestore |
-| Verification worker in `fiatsend-functions` | Verification in the Partner API with a reconcile job every minute |
-| `POST /v1/payment-intents/:id/submissions` proposed | Built and live |
-| Console routes for MoneyGram deposits, withdrawals, quotes and transfers | Not built |
-| SDP batches created by the console | Console creates batches through Partner API internal routes; Partner API talks to SDP |
-| Outbox, worker and DLQ | Not built; scheduled workers, admin queues and Slack alerts instead |
-| Payment intent states `created` / `awaiting_payment` | `pending_approval` / `approved` / `onchain_pending` / `paid` / `completed` |
-| Wallets Kit for merchant treasury funding | Wallets Kit for binding and customer payments; treasury funding uses the pooled deposit address with a memo |
-| Not in plan | Website checkout, invoices with mobile money and bank transfer, SEP-7 QR, pooled deposits with memo routing, SDP claim flow with WhatsApp/SMS/email, admin maker-checker approvals |
