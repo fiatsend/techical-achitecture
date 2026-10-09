@@ -2,1334 +2,563 @@
 
 ## 1) Executive Brief
 
-This document defines the production architecture for Fiatsend's planned Stellar integration across:
+Fiatsend's Stellar integration covers three SCF #43 components, all live on Stellar mainnet and tested with live transactions:
 
-- `Fiatsend console` (business platform)
-- `Fiatsend app` (consumer app + core API layer)
-- `fiatsend-functions` (asynchronous workers and webhooks)
+1. **Stellar Wallets Kit** in the business console: merchants connect their own wallet and receive USDC from payment links, QR codes and website checkout directly into it.
+2. **Stellar Disbursement Platform (SDP)**: single and bulk business payouts, with claim links for first-time recipients and local settlement to mobile money.
+3. **Anchor integration with SeevCash**: consumers cash USDC out to Ghana mobile money through SEP-10, SEP-12, SEP-38 and SEP-6.
 
-The design aligns with the SCF #43 scope for:
+Fiatsend's local settlement rails (mobile money and bank payouts in Ghana) remain the final leg, and on-chain completion is tracked separately from local delivery (§11).
 
-1. Stellar Wallets Kit integration for merchant wallet connection, USDC treasury funding, and payment acceptance.
-2. Stellar Disbursement Platform (SDP) integration for single and bulk business payouts.
-3. Stellar Anchor Platform (SEP-24) integration with **MoneyGram** for hosted deposit (cash-in), withdraw (cash-out), and transfer lifecycle.
-4. Preservation of Fiatsend's existing local settlement rails (mobile money payout workflows).
+What is live, by surface:
 
-**Business liquidity (intended flow).** Merchants fund and move value through two complementary paths:
+| Capability | Surface | Stellar components | Status |
+|---|---|---|---|
+| Merchant wallet connect | Business console | Stellar Wallets Kit (Freighter, xBull), SEP-53 signed-message proof | Live (mainnet when enabled per environment) |
+| Payment links and QR | Console → Partner API → pay.fiatsend.com | Wallets Kit (Freighter, Albedo, xBull), SEP-7 `web+stellar:pay` QR, Horizon verification | Live |
+| Website checkout (buttons, embed, API) | Console, Partner API, pay page | Same as payment links | Live |
+| Invoices with mobile money / bank transfer | Console public invoice page | None (manual confirmation) | Live |
+| Business USDC deposits | Console | Pooled treasury account + per-business memo, Horizon watcher | Live |
+| Consumer USDC cash-out to mobile money | Mobile app → `mobileApi` | SeevCash SEP-10 / 12 / 38 / 6 from a pooled treasury | Live |
+| Single and bulk payouts | Console → Partner API → SDP | Self-hosted Stellar Disbursement Platform, SEP-10/24 receiver claim | Live |
 
-| Path | Mechanism | Use case |
-|------|-----------|----------|
-| On-chain USDC | Stellar Wallets Kit (connect + sign) | Fund business treasury by sending USDC to the bound merchant Stellar account |
-| Fiat cash-in | MoneyGram via SEP-24 deposit | Add USDC liquidity without an external wallet transfer |
-| Fiat cash-out | MoneyGram via SEP-24 withdraw | Convert USDC balance to cash at MoneyGram locations |
-
-Local mobile-money payout (GHS) remains on Fiatsend's existing settlement engine and is **not** conflated with on-chain or anchor completion.
+Local mobile-money settlement in Ghana (MTN, Telecel, AirtelTigo) runs on Fiatsend's rails: Moolre for GHS payouts and SeevCash for USDC to GHS.
 
 ---
 
 ## Table of Contents
 
-1. Executive Brief  
-2. System Architecture Overview  
-   2.1 Business Treasury and Liquidity Flows  
-3. Integration Layer Architecture  
-   3.1 New Module Structure  
-4. Stellar Anchor Platform Integration - SEP-24 Conversion and Settlement  
-   4.1 What the Anchor Platform Layer Does in Fiatsend  
-   4.2 Off-Ramp Payment Flow  
-   4.3 Anchor Platform Integration Points  
-   4.4 Ghana Corridor Routing (GHS)  
-   4.5 SEP-38 Quote Flow  
-   4.6 MoneyGram Merchant Cash-In and Cash-Out  
-5. Stellar Disbursement Platform (SDP) - Batch Payouts  
-   5.1 What SDP Does in Fiatsend  
-   5.2 Batch Payout Flow  
-   5.3 SDP Integration Points  
-   5.4 SDP Batch Processing Pipeline  
-   5.5 SDP Operational Controls  
-6. Stellar Wallets Kit - Non-Custodial Wallet Connect  
-   6.1 What Wallets Kit Does in Fiatsend  
-   6.2 Wallet Payment Flow  
-   6.3 SDK Integration  
-   6.4 Wallets Kit Integration Points  
-7. Unified Data Model  
-   7.1 New Database Schema Additions  
-8. API Endpoints (Aligned to Repositories)  
-   8.1 Partner API (`fiatsend-partner-api`) — Shipped  
-   8.2 Console API (`fiatsend-console`) — Shipped  
-   8.3 Stellar Program Extensions (Proposed)  
-   8.4 Inbound Provider Webhooks (`fiatsend-functions`)
-9. Security Architecture  
-10. Infrastructure and Deployment  
-11. Technology Stack Summary  
-12. Product + Platform Context (Current State)  
-13. Strategic Engineering Principles  
-14. Target Architecture (High-Level)  
-15. Component Ownership by Repository  
-   15.1 `Fiatsend console` (Business UI + B2B API)  
-   15.2 `Fiatsend app` (Core orchestration + consumer app APIs)  
-   15.3 `fiatsend-functions` (Async + integration edges)  
-   15.4 External dependencies  
-   15.5 Ledger Service (Canonical Source of Truth)  
-16. End-to-End Domain Model  
-   16.1 Production API to Stellar/Ledger Object Mapping  
-17. Wallets Kit Integration Architecture  
-   17.1 Wallet Binding Flow  
-   17.2 Guardrails  
-18. Merchant Payment Flow Architecture (Consumer -> Business)  
-   18.1 Payment intent API contract (proposed)  
-   18.2 On-Chain Transaction Verification (Payment Intents)  
-19. SDP Payout Architecture (Business -> Recipient)  
-   19.1 SDP Deployment Model and Anchor Strategy (SCF43)  
-   19.1.1 Deployment model  
-   19.1.2 Anchor strategy for local-currency settlement leg  
-   19.1.3 Reconciliation close process (on-chain -> mobile money)  
-   19.1.4 Operational ownership and capacity  
-20. State Machines (Canonical)  
-   20.1 Payment Intent  
-   20.2 Payout Item  
-21. Reliability, Retry, and Reconciliation  
-   21.1 Outbox + worker model  
-   21.2 Policy  
-   21.3 Stuck-State Matrix and Recovery  
-   21.4 Webhook Delivery Contract (Outbound + Inbound)  
-22. Security and Compliance Architecture  
-   22.1 Security controls  
-   22.2 Compliance controls  
-   22.3 Production Security and Compliance Checklist  
-23. Observability and Operational Excellence  
-   23.1 Telemetry standards  
-   23.2 Key SLOs  
-24. Environment and Release Strategy  
-   24.1 Tranche delivery mapping  
-25. Engineering Work Breakdown (Implementation Plan)  
-26. Risk Register  
-27. Decision Log (Initial ADRs)  
-28. Success Criteria  
-   28.1 Technical  
-   28.2 Product/Business (aligned to SCF trajectory)  
-29. Conclusion  
-Appendix A) Architecture Review Notes (May 2026)  
+1. Executive Brief
+2. System Architecture
+3. Repositories and Runtime
+4. Anchor Integration: SeevCash (SEP-10, 12, 38, 6)
+5. Stellar Disbursement Platform (SDP) Payouts
+6. Stellar Wallets Kit and Wallet Binding
+7. Payment Acceptance: Payment Intents, Pay Page, Checkout, Invoices
+8. Deposits and Treasury
+9. Data Model
+10. API Surfaces
+11. State Machines
+12. Reliability, Retry and Reconciliation
+13. Security and Compliance
+14. Observability
+15. Infrastructure and Deployment
+16. Tranche Delivery Status
+17. Roadmap
+18. Success Criteria
+19. Decision Log
 
 ---
 
-## 2) System Architecture Overview
-
-Fiatsend's Stellar program is a three-surface architecture:
-
-- `Fiatsend console`: business onboarding, wallet connect, payout creation, treasury controls.
-- `Fiatsend app`: consumer payment experiences, payment resolution, intent lifecycle APIs.
-- `fiatsend-functions`: asynchronous reconciliation, callbacks, status normalization, retries.
+## 2) System Architecture
 
 ```mermaid
 flowchart LR
-    Merchant[Merchant Operator] --> Console[Fiatsend console]
-    Consumer[Consumer App User] --> Main[Fiatsend app]
-    Console --> Integration[Fiatsend Integration Layer]
-    Main --> Integration
-    Integration --> AP[Stellar Anchor Platform SEP24]
-    Integration --> SDP[Stellar Disbursement Platform]
-    Integration --> WK[Stellar Wallets Kit]
-    AP --> Settlement[Local Settlement Engine]
-    Integration --> Settlement
-    Settlement --> Ghana[Mobile Money - GHS]
+    Biz[Business operator] --> Console[Business console<br/>console.fiatsend.com]
+    Payer[Customer] --> Pay[Pay page<br/>pay.fiatsend.com]
+    Consumer[Consumer] --> Web[Web app<br/>app.fiatsend.com]
+    Consumer --> Mobile[Mobile app]
+    Dev[Integrator] --> PAPI[Partner API<br/>api / sandbox.fiatsend.com]
+
+    Console --> CAPI[Console API]
+    CAPI --> PAPI
+    Pay --> Web
+    Web --> PAPI
+    Mobile --> MAPI[mobileApi<br/>fiatsend-functions]
+    Web --> MAPI
+
+    PAPI --> Horizon[Stellar Horizon]
+    PAPI --> SDP[Self-hosted SDP]
+    CAPI --> Horizon
+    MAPI --> Horizon
+    MAPI --> Seev[SeevCash anchor<br/>SEP-10/12/38/6]
+    SDP --> Stellar[Stellar network]
+    Seev --> MoMo[Ghana mobile money]
+    PAPI --> Moolre[Moolre GHS payouts]
+    Web --> Moolre
+    Moolre --> MoMo
 ```
 
-### 2.1 Business Treasury and Liquidity Flows
+Key properties:
 
-Merchants interact with Stellar liquidity through the console using Wallets Kit and MoneyGram (SEP-24). These flows are distinct from consumer-to-merchant QR payments and from GHS mobile-money payouts.
-
-```mermaid
-flowchart TD
-    subgraph fund [Fund USDC Treasury]
-        WK[Wallets Kit: connect + sign] --> USDC1[Inbound USDC transfer]
-        MG_IN[MoneyGram SEP-24 deposit] --> USDC2[USDC credited via anchor]
-    end
-
-    subgraph spend [Spend / Distribute]
-        USDC1 --> BAL[Merchant ledger balance]
-        USDC2 --> BAL
-        BAL --> PAY[Consumer payment intents]
-        BAL --> SDP_OUT[SDP batch / single payout]
-        BAL --> MG_OUT[MoneyGram SEP-24 withdraw cash-out]
-    end
-
-    subgraph local [Local Fiat Settlement - unchanged]
-        SDP_OUT --> GHS[Mobile money - GHS]
-    end
-```
-
-| Flow | Entry point | Stellar component | Ledger impact |
-|------|-------------|-------------------|---------------|
-| Fund via wallet | Console → Wallets Kit | On-chain USDC transfer to bound account | Credit `available_usdc` after chain finality |
-| Cash-in (deposit) | Console → SEP-24 interactive URL | MoneyGram anchor deposit | Credit after anchor `completed` + reconciliation |
-| Cash-out (withdraw) | Console → SEP-24 withdraw | MoneyGram anchor withdraw | Debit after anchor confirms + chain leg final |
-| Consumer payment | App QR / link | Horizon-verified payment tx | Credit merchant on `paid` |
-| GHS payout | Partner API / console batch | SDP on-chain + local rail | Debit on `local_settled` only |
-
-**Design invariant:** `onchain_complete` (chain or SDP) does **not** imply `local_settled` (mobile money delivered). Fiatsend's customer promise is fulfilled only at `local_settled` for GHS legs.
+- **Non-custodial for merchants.** Merchants receive USDC payments directly into their own bound Stellar wallet. Fiatsend stores only the public key.
+- **Pooled custody for deposits and consumers.** Business deposits and consumer USDC balances use pooled treasury accounts with per-account memo IDs. Consumer and partner memo ranges are separated (partner memos start at 1,000,000).
+- **Server-held consumer wallets.** The mobile app signs nothing on the device; the server checks the user's PIN and pays from the pooled treasury. Keys for server-held wallets are wrapped with Cloud KMS.
+- **Testnet/mainnet switch requires two flags.** Every surface uses a network setting plus an explicit "allow mainnet" flag; without both it stays on testnet.
 
 ---
 
-## 3) Integration Layer Architecture
+## 3) Repositories and Runtime
 
-The integration layer sits between Fiatsend product surfaces and Stellar ecosystem services. It provides:
-
-- policy enforcement (KYB tiers, limits, route eligibility),
-- idempotent orchestration and retries,
-- status normalization across on-chain and off-chain states,
-- auditable eventing for grant and compliance reporting.
-
-### 3.1 New Module Structure
-
-```text
-fiatsend-app/
-  src/lib/stellar/
-    anchorPlatformClient.ts
-    sep38Quotes.ts
-    sdpClient.ts
-    walletsKitAdapter.ts
-    routing/
-      ghsRoutePolicy.ts
-      feePolicy.ts
-    events/
-      stellarEventNormalizer.ts
-      webhookSignature.ts
-```
+| Repository | Role | Runtime |
+|---|---|---|
+| `fiatsend-console` | Business dashboard (React) and console API (Express): wallet binding, payment links, checkout, invoices, deposits, payouts UI, admin tools | Vercel (frontend) + Cloud Run `fiatsend-console-api` + Cloud SQL Postgres |
+| `fiatsend-partner-api` | External API (`/v1`), payment intents and on-chain verification, payout batches to SDP, webhooks, virtual accounts | Cloud Run (`fiatsend-prod-api` mainnet, `fiatsend-sandbox-api` sandbox) + Postgres |
+| `fiatsend-pay` | Customer checkout page for payment intents (Wallets Kit, SEP-7 QR, embed mode) | Vercel, pay.fiatsend.com |
+| `fiatsend-main` | Consumer web app and public payment-intent session routes; custodial ledgers; Moolre cash-out | Vercel, app.fiatsend.com + Firestore |
+| `fiatsend-functions` | `mobileApi` for the mobile app; SeevCash cash-out; SDP receiver claim; deposit watchers; webhook receivers; schedulers | Firebase Cloud Functions gen2, us-central1 |
+| `fiatsend-mobile` | Consumer mobile app (Expo); talks only to `mobileApi` | EAS builds + over-the-air updates |
+| `stellar-disbursement-platform-backend` | Fiatsend-patched SDP (pooled receiver address with memos; WhatsApp/SMS/email channels; registration-link and pending-claims endpoints) | GKE Autopilot + Cloud SQL (testnet and mainnet) |
+| `fiatsend-admin` | Internal operations: approvals queue (maker-checker), treasury sweeps, withdrawal review, RBAC | Vercel |
+| `developer-portal` | API reference at developer.fiatsend.com | Cloudflare Workers |
+| `docs` | Product and integration docs at docs.fiatsend.com | Vercel |
 
 ---
 
-## 4) Stellar Anchor Platform Integration - SEP-24 Conversion and Settlement
+## 4) Anchor Integration: SeevCash (SEP-10, 12, 38, 6)
 
-### 4.1 What the Anchor Platform Layer Does in Fiatsend
+### 4.1 What the anchor layer does
 
-The Anchor Platform integration layer connects Fiatsend to **MoneyGram** via SEP-24 for merchant **cash-in** (deposit) and **cash-out** (withdraw), plus transfer lifecycle tracking. In Fiatsend, this is the regulated bridge between fiat cash corridors and USDC treasury balances.
+The anchor layer converts USDC on Stellar into Ghana cedis paid to mobile money. Fiatsend integrates with SeevCash, a Ghana anchor, as a SEP client. The client code lives in `fiatsend-functions` (`stellarCashout`, `ramp/anchorClient`) for the mobile app and in `fiatsend-main` (`lib/stellar/anchors`) for the web.
 
-For **GHS mobile-money payouts** to end recipients, Fiatsend continues to use its local settlement engine after the on-chain leg completes (see §19.1.2). SEP-24 MoneyGram flows and GHS payout flows must not share a single conflated status field.
-
-### 4.2 Off-Ramp Payment Flow
+### 4.2 Mobile cash-out flow (programmatic SEP-6)
 
 ```mermaid
 sequenceDiagram
-    participant User as Consumer or Merchant
-    participant API as Fiatsend Orchestration API
-    participant SEP38 as Quote Service (SEP-38)
-    participant Anchor as Stellar Anchor Platform SEP24
-    participant Rail as Local Settlement Rail
+    participant User as Consumer (mobile app)
+    participant API as mobileApi
+    participant T as Pooled treasury
+    participant A as SeevCash anchor
+    participant MM as Mobile money
 
-    User->>API: Request off-ramp (asset, amount, GHS route)
-    API->>SEP38: Get quote (send/receive amounts)
-    SEP38-->>API: firm quote + expiry
-    API->>Anchor: Create SEP-24 transfer/transaction
-    Anchor-->>API: transfer id + pending state
-    Anchor->>Rail: Execute payout
-    Rail-->>Anchor: settlement result
-    Anchor-->>API: completed/failed webhook
+    User->>API: Quote (amount, network, number)
+    API->>A: SEP-10 auth
+    API->>A: SEP-12 customer (KYC fields gathered natively)
+    API->>A: SEP-38 firm quote
+    A-->>API: quote + expiry
+    User->>API: Authorize with PIN
+    API->>A: SEP-6 withdraw
+    A-->>API: deposit account + memo
+    API->>T: Sign and send USDC payment
+    A->>MM: Pay GHS
+    A-->>API: Status (webhook + status worker)
+    API-->>User: Completed / failed
 ```
 
-### 4.3 Anchor Platform Integration Points
+- KYC and mobile-money details are collected in the app's own screens, then sent to the anchor through SEP-12, which keeps the whole flow native to the app.
+- The quote is firm and time-limited (SEP-38); an expired quote restarts the flow.
+- Status arrives through a signed SeevCash webhook and a status worker that polls every 2 minutes.
+- A salary auto-cash-out path uses the same flow for SDP payouts that recipients choose to receive in cedis.
 
-- Quote acquisition and verification (`SEP-38`).
-- Transfer initiation and status tracking (`SEP-24 transfer endpoints`).
-- Webhook callback processing and status reconciliation in `fiatsend-functions`.
-- GHS route compliance and payout rule validation before anchor submission.
+### 4.3 Web cash-out
 
-### 4.4 Ghana Corridor Routing (GHS)
-
-```mermaid
-flowchart TD
-    A[Off-ramp Request] --> B[GHS Route Policy]
-    B --> C[Anchor Transfer Builder]
-    C --> D[Execute via Stellar Anchor Platform]
-```
-
-Corridor strategy: Fiatsend integrates with a GHS-capable anchor provider for USDC - GHS settlement (Yellow Card / Seevcash), with provider routing and failover managed by Fiatsend policies.
-
-### 4.5 SEP-38 Quote Flow
-
-- Fiatsend fetches executable quote with strict TTL.
-- Quote hash and expiry are persisted for replay protection.
-- Converted amount, fee, and spread are pinned to ledger entry before payout creation.
-- If quote expires before transfer submit, flow restarts with new quote.
-
-### 4.6 MoneyGram Merchant Cash-In and Cash-Out
-
-```mermaid
-sequenceDiagram
-    participant Biz as Merchant
-    participant Console as Fiatsend console
-    participant API as Orchestration API
-    participant MG as MoneyGram SEP-24
-    participant LGR as Ledger Service
-
-    Biz->>Console: Start cash-in or cash-out
-    Console->>API: POST offramp transfer (direction)
-    API->>MG: Initiate SEP-24 interactive flow
-    MG-->>Console: Hosted URL (KYC / location steps)
-    MG-->>API: Webhook status updates
-    API->>LGR: Apply transition (pending → completed)
-    LGR-->>Console: Updated USDC balance / status
-```
-
-- **Cash-in (deposit):** Merchant completes MoneyGram SEP-24 deposit; ledger credits USDC on anchor `completed` after reconciliation.
-- **Cash-out (withdraw):** Merchant debits USDC treasury; MoneyGram SEP-24 withdraw completes; ledger debits on confirmed withdraw.
-- Cash-in/cash-out statuses are tracked on `offramp_transfers`, separate from `payout_item` GHS settlement.
+The web app uses the same SeevCash integration. A hosted SEP-24 withdraw path is also available behind a feature flag.
 
 ---
 
-## 5) Stellar Disbursement Platform (SDP) - Batch Payouts
+## 5) Stellar Disbursement Platform (SDP) Payouts
 
-### 5.1 What SDP Does in Fiatsend
+### 5.1 What SDP does in Fiatsend
 
-SDP orchestrates large-volume payout execution and lifecycle tracking, while Fiatsend retains recipient governance, compliance policy, and local settlement confirmation.
+SDP executes single and bulk USDC disbursements. Fiatsend keeps recipient management, balance checks, claim invitations and local settlement.
 
-### 5.2 Batch Payout Flow
-
-```mermaid
-flowchart LR
-    Upload[Partner uploads batch] --> Validate[Schema + limits + KYB]
-    Validate --> Screen[Risk screening]
-    Screen --> Create[Create SDP batch]
-    Create --> Track[Track item statuses]
-    Track --> Local[Trigger local settlement]
-    Local --> Final[Mark settled + webhook]
-```
-
-### 5.3 SDP Integration Points
-
-- Batch create and item mapping.
-- Lifecycle polling and callback ingestion.
-- Idempotent re-submission protections.
-- DLQ handling for failed provider interactions.
-
-### 5.4 SDP Batch Processing Pipeline
-
-- `received` -> `validated` -> `submitted_to_sdp` -> `onchain_pending` -> `onchain_complete` -> `local_settled`.
-- Failed records move to `manual_review_required` with retry metadata.
-
-### 5.5 SDP Operational Controls
-
-Production SDP/batch payout operations require explicit controls beyond the state machine:
-
-| Control | Policy |
-|---------|--------|
-| Per-partner limits | Max items per batch, daily volume cap, and per-recipient amount ceiling by KYB tier |
-| Batch approval | Batches above tier threshold require `pending_approval` → operator or dual-control `approved` before SDP submit |
-| Partial batch failure | Batch status = `partially_complete`; failed items isolated; successful items continue to local settlement |
-| Retry limits | Max 3 automated retries per item with exponential backoff; then `manual_review_required` |
-| Manual override | Ops can force `local_settled` or `local_failed` only via dual-control with immutable audit reason |
-| SLA alerts | Alert if item in `onchain_pending` > 15 min, `local_settlement_pending` > 30 min, or batch incomplete > 4 h |
-
----
-
-## 6) Stellar Wallets Kit - Non-Custodial Wallet Connect
-
-### 6.1 What Wallets Kit Does in Fiatsend
-
-Wallets Kit provides merchant-controlled non-custodial wallet connectivity for account linking, balance visibility, payment authorization, and **direct USDC funding** of the merchant treasury (signed transfer from the connected wallet to the business-bound Stellar account).
-
-### 6.2 Wallet Payment Flow
+### 5.2 Payout flow
 
 ```mermaid
 sequenceDiagram
-    participant Merchant as Merchant
-    participant Console as Fiatsend console
+    participant Biz as Business
+    participant C as Console API
+    participant P as Partner API
+    participant S as SDP
+    participant R as Recipient
+    participant L as Local settlement
+
+    Biz->>C: Create batch (single or CSV bulk)
+    C->>C: KYB check, wallet check for G-addresses, debit USDC balance
+    C->>P: POST /internal/payout-batches
+    P->>S: Create disbursement
+    S->>R: Claim invite (WhatsApp / SMS / email)
+    R->>S: Claim via Fiatsend wallet (SEP-10 + SEP-24)
+    S-->>P: Payment status (polled)
+    P-->>C: Item statuses
+    P->>L: Optional GHS cash-out via SeevCash
+    C-->>Biz: Dashboard status, claim links, resend
+```
+
+- **Recipients:** phone, email or Stellar address; the destination type is inferred. Bulk upload is a CSV (`amount, recipient, memo, reference, date_of_birth`).
+- **Balance first:** the console debits the business's USDC balance before submitting, and refunds it if submission fails.
+- **First-time recipients:** receive a claim link; the receiver wallet is Fiatsend's pooled address with a per-user memo (enabled by Fiatsend's SDP patch). Unclaimed payments expire and are credited back to the business.
+- **Controls:** pause and resume a batch, resend a claim invite, copy a claim link.
+- **Reconciliation:** SDP payment IDs are matched to SeevCash references; matched and unmatched items are visible in the admin Stellar Tranche 3 page.
+
+### 5.3 SDP deployment
+
+| Environment | Deployment | Status |
+|---|---|---|
+| Testnet | GKE Autopilot, Helm chart, Cloud SQL, patched SDP image | Live (sandbox) |
+| Mainnet | `sdp.fiatsend.com` / `sdp-admin.fiatsend.com`, same image, `NETWORK_TYPE: mainnet`, distribution account funded by the business | Live; tested with live transactions from the console |
+
+The SDP fork's two Fiatsend changes (pooled receiver address with distinct memos; WhatsApp, SMS and email channels plus registration-link and pending-claims endpoints) should be pushed to a Fiatsend-owned remote (§17).
+
+---
+
+## 6) Stellar Wallets Kit and Wallet Binding
+
+### 6.1 What the binding does
+
+A business connects its own Stellar wallet in the console. Payment links then pay directly into that wallet. Fiatsend stores only the public key.
+
+### 6.2 Binding flow (SEP-53 signed message)
+
+```mermaid
+sequenceDiagram
+    participant B as Business
+    participant UI as Console
     participant WK as Wallets Kit
-    participant API as Fiatsend API
-    Merchant->>Console: Connect wallet
-    Console->>WK: Session/connect handshake
-    WK-->>Console: wallet address + network
-    Console->>API: Register wallet binding
-    API-->>Console: binding confirmed
-```
-
-### 6.3 SDK Integration
-
-- Client SDK in `Fiatsend console` for connect/disconnect/sign interactions.
-- Signed payload verification in backend prior to persisting wallet bindings.
-- Network capability checks (testnet/mainnet gates by partner tier).
-
-### 6.4 Wallets Kit Integration Points
-
-- Wallet binding management
-- Payment authorization UX
-- Signature verification APIs
-- Account capability registry
-
----
-
-## 7) Unified Data Model
-
-Fiatsend uses a unified model across wallet bindings, quote snapshots, payout batches, item-level statuses, and settlement outcomes.
-
-### 7.1 New Database Schema Additions
-
-- `stellar_wallet_bindings`
-- `offramp_quotes`
-- `offramp_transfers`
-- `sdp_batches`
-- `sdp_batch_items`
-- `ghs_route_policies`
-
----
-
-## 8) API Endpoints (Aligned to Repositories)
-
-Fiatsend exposes three API surfaces. Paths below are **exact** for shipped code; Stellar extensions are **proposed** and namespaced to match each repo's conventions.
-
-| Surface | Base URL (production) | Auth | Repository |
-|---------|----------------------|------|------------|
-| Partner API | `https://api.fiatsend.com/v1` | `Authorization: Bearer fs_live_*` | `fiatsend-partner-api` |
-| Partner API (sandbox) | `https://sandbox.fiatsend.com/v1` | `Authorization: Bearer fs_test_*` | `fiatsend-partner-api` |
-| Console BFF | `https://console.fiatsend.com/api` | Session cookie / bearer from login | `fiatsend-console` |
-| Provider webhooks | Cloud Functions URL (per env) | HMAC / provider JWT | `fiatsend-functions` |
-
-Response envelope (Partner API): `{ "status": "success" \| "error", "data": ..., "code"?: ... }`.
-
-### 8.1 Partner API (`fiatsend-partner-api`) — Shipped
-
-Mounted at `/v1` in `src/index.ts`. Implements GHS payout and merchant collect flows; maps to ledger `payout_item` / `payment_intent` (§16.1).
-
-#### Health and quoting
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `GET` | `/v1/health` | No | API health and environment |
-| `GET` | `/v1/rates` | Bearer | FX quote (`from_currency`, `to_currency`, `amount`) |
-| `GET` | `/v1/supported-networks` | Bearer | Mobile-money networks (MTN, TELECEL, AIRTELTIGO) |
-| `GET` | `/v1/limits` | Bearer | KYB tier limits |
-
-#### Withdrawals (GHS mobile-money payout)
-
-| Method | Path | Auth | Idempotency | Description |
-|--------|------|------|-------------|-------------|
-| `POST` | `/v1/withdrawals` | Bearer | `reference_id` (body) | Create payout; `201` new, `200` duplicate ref |
-| `GET` | `/v1/withdrawals/:id` | Bearer | — | Payout status; may include `on_chain_tx_hash`, `mobile_money_reference` |
-
-**Body (`POST /v1/withdrawals`):** `amount`, `currency` (`USDC` \| `USDT`), `recipient_phone` (`+233…`), `mobile_network`, `reference_id`, optional `metadata`.
-
-**Statuses:** `pending` → `processing` → `completed` \| `failed`.
-
-**Webhook events:** `withdrawal.pending`, `withdrawal.processing`, `withdrawal.completed`, `withdrawal.failed`.
-
-#### Payment intents (merchant collect / consumer approval)
-
-| Method | Path | Auth | Idempotency | Description |
-|--------|------|------|-------------|-------------|
-| `POST` | `/v1/payment-intents` | Bearer | `merchant_reference` (body) | Create intent (`pending_approval`); `201` / `200` |
-| `GET` | `/v1/payment-intents/:id` | Bearer | — | Get intent (auto-expires past TTL) |
-| `POST` | `/v1/payment-intents/:id/cancel` | Bearer | — | Cancel while `pending_approval` |
-
-**Body (`POST /v1/payment-intents`):** `amount`, `currency` (`GHS` \| `USDC` \| `USDT`), `consumer_phone`, `merchant_reference`, optional `terminal_id`, `description`, `metadata`.
-
-**Webhook events:** `payment_intent.pending_approval`, `.approved`, `.completed`, `.rejected`, `.cancelled`, `.expired`, `.failed`.
-
-#### Internal (consumer app / workers — not for merchant API keys)
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `POST` | `/v1/internal/payment-intents/:id/decision` | `X-Internal-Token` | `approve` \| `complete` \| `reject` \| `fail` |
-| `GET` | `/v1/internal/payment-intents/:id` | `X-Internal-Token` | Read intent |
-| `GET` | `/v1/internal/payment-intents?consumer_phone=` | `X-Internal-Token` | List pending for phone |
-
-#### Transactions list and webhooks
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `GET` | `/v1/transactions` | Bearer | Paginated withdrawal history (`page`, `per_page`, `status`) |
-| `POST` | `/v1/webhooks` | Bearer | Register endpoint + event subscriptions |
-| `GET` | `/v1/webhooks` | Bearer | List registrations (secret omitted) |
-| `DELETE` | `/v1/webhooks/:id` | Bearer | Remove registration |
-| `GET` | `/v1/webhook-deliveries` | Bearer | Delivery logs (`?event_id=` optional) |
-| `GET` | `/v1/webhook-deliveries/:event_id` | Bearer | Logs for one event |
-
-**Outbound webhook headers:** `X-Fiatsend-Signature`, `X-Fiatsend-Event`, `X-Fiatsend-Delivery` (see §21.4).
-
-#### Stellar extensions on Partner API (proposed — post chain verification)
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `POST` | `/v1/payment-intents/:id/submissions` | Bearer or internal | Submit `tx_hash` for USDC collect; → `onchain_pending` |
-| `GET` | `/v1/payment-intents/:id` | Bearer | Extend response: `chain_status`, `on_chain_tx_hash` |
-
-> `POST /v1/withdrawals` path and payload **unchanged** for integrators; Stellar adds `chain_status` / `local_status` on GET when dual-leg settlement is live.
-
-### 8.2 Console API (`fiatsend-console`) — Shipped
-
-Session-authenticated BFF for the business dashboard. Console UI calls these routes; programmatic partners use §8.1.
-
-#### Auth and partner profile
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/auth/register`, `/api/auth/login`, `/api/auth/login/2fa`, `/api/auth/logout` | Partner auth |
-| `GET` | `/api/auth/me` | Current partner session |
-| `PATCH` | `/api/partner/profile`, `/api/partner/security`, `/api/partner/password` | Profile and 2FA |
-| `GET` | `/api/kyb/status`, `POST` | `/api/kyb/create-didit-session` | KYB |
-
-#### Treasury, terminals, payouts (console-native today)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/partner/dashboard` | Dashboard aggregates |
-| `GET` / `PATCH` | `/api/partner/wallet` | Balances (`USDC`, `USDT`, `GHS`), accept-payments toggle |
-| `GET` / `POST` / `DELETE` | `/api/partner/terminals` | Payment terminals / QR |
-| `GET` | `/api/public/terminals/:terminalId` | Terminal lookup (consumer app) |
-| `GET` / `PUT` | `/api/partner/settlement` | Settlement configuration |
-| `POST` | `/api/partner/swap` | USDC/USDT → GHS balance (MVP) |
-| `GET` | `/api/transactions` | Partner transaction list |
-| `POST` | `/api/transactions/payout` | Console-initiated payout (maps to same ledger as `/v1/withdrawals`) |
-| `GET` | `/api/transactions/:id` | Transaction detail |
-| `GET` / `POST` / `DELETE` | `/api/webhooks` | Webhook CRUD (console-managed) |
-| `GET` | `/api/keys` | API key management |
-
-**Console → Partner API:** Payment intent snippets in the UI target `POST {PARTNER_API}/v1/payment-intents` (see `wallets.tsx`). Payouts in sandbox docs use `POST {PARTNER_API}/v1/withdrawals`.
-
-### 8.3 Stellar Program Extensions (Proposed)
-
-Hosted on **console server** for merchant UX in tranche 1; orchestration may later move to `Fiatsend app`. All writes go through Ledger Service (§15.5).
-
-#### Wallets Kit (console BFF)
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `POST` | `/api/partner/stellar/wallets/bind` | Session | Register binding after Wallets Kit connect |
-| `POST` | `/api/partner/stellar/wallets/verify-signature` | Session | Verify signed challenge |
-| `GET` | `/api/partner/stellar/wallets` | Session | Active binding + network + capabilities |
-| `POST` | `/api/partner/stellar/wallets/unbind` | Session | Rebind flow with audit |
-
-#### MoneyGram SEP-24 (cash-in / cash-out)
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `POST` | `/api/partner/stellar/deposits` | Session | Start cash-in; returns SEP-24 interactive URL |
-| `POST` | `/api/partner/stellar/withdrawals` | Session | Start cash-out (MoneyGram, not GHS payout) |
-| `GET` | `/api/partner/stellar/transfers/:id` | Session | Anchor transfer status |
-| `POST` | `/api/partner/stellar/quotes` | Session | SEP-38 quote (TTL pinned on ledger) |
-
-> **Naming:** `/api/partner/stellar/withdrawals` = MoneyGram USDC cash-out. GHS mobile-money payout remains `POST /v1/withdrawals` (Partner API) or `POST /api/transactions/payout` (console).
-
-#### SDP batch payouts (console BFF)
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `POST` | `/api/partner/stellar/payout-batches` | Session | Upload / create batch |
-| `GET` | `/api/partner/stellar/payout-batches/:batchId` | Session | Batch + item statuses |
-| `POST` | `/api/partner/stellar/payout-batches/:batchId/retry` | Session | Retry failed items (policy §5.5) |
-| `POST` | `/api/partner/stellar/payout-batches/:batchId/approve` | Session | Dual-control approval when over limit |
-
-#### Consumer QR payment (internal — `Fiatsend app` / functions)
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `GET` | `/api/public/payment-intents/:id` | Public / app token | Resolve QR payload for payer |
-| `POST` | `/v1/internal/payment-intents/:id/submissions` | `X-Internal-Token` | Submit `tx_hash` after consumer signs (alternative to §8.1 extension) |
-
-### 8.4 Inbound Provider Webhooks (`fiatsend-functions`)
-
-Not exposed on Partner API. Workers verify signature, enqueue outbox, ack `200` after durable receipt.
-
-| Source | Proposed path | Purpose |
-|--------|---------------|---------|
-| MoneyGram / Anchor Platform | `/webhooks/stellar/anchor` | SEP-24 transfer status |
-| SDP | `/webhooks/stellar/sdp` | Disbursement item updates |
-| Horizon / indexer | `/webhooks/stellar/chain` | Tx finality for payment intents |
-| Didit (existing pattern) | `/api/webhooks/didit-kyb` | KYB (console server today) |
-
----
-
-
-## 9) Security Architecture
-
-- strict environment isolation (`testnet` vs `mainnet` secrets and routes),
-- signed webhooks with replay protection (see §21.4),
-- role-based and tier-based action gating,
-- idempotency keys on all financial mutations,
-- immutable event and audit trails for payout/payment state changes,
-- production checklist in §22.3 (key rotation, secrets manager, dual-control).
-
----
-
-## 10) Infrastructure and Deployment
-
-- `Fiatsend console`: UI releases with feature flags by partner cohort.
-- `Fiatsend app`: orchestration APIs for wallet, anchor platform, off-ramp, and SDP adapters.
-- `fiatsend-functions`: callback and reconciliation workers, backoff retries, DLQ processors.
-- staged rollout:
-  - tranche 1: testnet wallet + payment intent,
-  - tranche 2: testnet off-ramp + SDP batches,
-  - tranche 3: guarded mainnet launch with GHS volume ramp-up.
-
----
-
-## 11) Technology Stack Summary
-
-- **Frontend**: React/TypeScript (`Fiatsend console`, `Fiatsend app`)
-- **Backend orchestration**: Next.js API routes + Node services
-- **Async processing**: Firebase Functions scheduled and webhook workers
-- **Stellar integrations**: Wallets Kit, Stellar Anchor Platform (SEP-24), SEP-compliant off-ramp APIs, SDP
-- **Data and audit**: existing Fiatsend DB + event/audit records + reconciliation jobs
-
----
-
-## 12) Product + Platform Context (Current State)
-
-Fiatsend already operates a dual surface:
-
-- **Business surface (`Fiatsend console`)**
-  - Partner onboarding/KYB progression (`pending -> verified -> active`)
-  - Wallet balances (`USDC`, `USDT`, `GHS`)
-  - Payment terminal management and transaction history
-  - Single payout and settlement configuration
-
-- **Consumer surface (`Fiatsend app`)**
-  - User authentication and wallet/deposit flows
-  - Merchant payment interactions
-  - Ledger and transfer activity APIs
-
-- **Async/function surface (`fiatsend-functions`)**
-  - Webhooks and long-running blockchain/settlement jobs
-  - Scheduled reconciliation/indexing patterns already in production use
-
-The Stellar program should extend this architecture, not replace it.
-
----
-
-## 13) Strategic Engineering Principles
-
-1. **Event-driven reliability over synchronous coupling**
-   - Frontends should never wait for chain finality; status must be asynchronous.
-2. **Dual-ledger model**
-   - Keep on-chain status and off-chain local-settlement status distinct (`onchain_complete` ≠ `local_settled`).
-3. **Ledger-first writes**
-   - Adapters propose; Ledger Service commits merchant-visible state.
-4. **Idempotent orchestration**
-   - Every payment/payout creation endpoint accepts idempotency keys (`reference_id`, `merchant_reference`).
-5. **Progressive feature flags**
-   - Gate by environment, partner tier, and transaction limits.
-6. **Audit-ready by default**
-   - Every status transition must include source, actor, and correlation IDs.
-
----
-
-## 14) Target Architecture (High-Level)
-
-```mermaid
-flowchart LR
-    B[Business Operator] --> C[Fiatsend console]
-    U[Consumer User] --> M[Fiatsend app]
-
-    C --> O[Orchestration API Layer]
-    M --> O
-
-    O --> WK[Stellar Wallets Kit Adapter]
-    O --> AP[Stellar Anchor Platform Adapter]
-    O --> SDP[Stellar Disbursement Adapter]
-    O --> LGR[Fiatsend Ledger Service]
-    O --> CMP[Compliance Service]
-    O --> EV[Event Bus / Outbox]
-
-    WK --> ST[Stellar Network]
-    AP --> ST
-    SDP --> ST
-
-    EV --> FN[fiatsend-functions Workers]
-    FN --> REC[Reconciliation + Status Updater]
-    REC --> LGR
-
-    LGR --> SET[Local Settlement Engine]
-    SET --> MM[Mobile Money Rails]
-
-    LGR --> WH[Merchant Webhooks]
-    LGR --> C
-    LGR --> M
-```
-
----
-
-## 15) Component Ownership by Repository
-
-### 15.1 `Fiatsend console` (Business UI + B2B API)
-
-- Session BFF under `/api/partner/*` and `/api/transactions/*` (§8.2).
-- Wallet connection UX using Stellar Wallets Kit (`/api/partner/stellar/wallets/*` proposed).
-- Merchant wallet profile screen (address, network, trustline, balance).
-- Payment link/QR via Partner API `POST /v1/payment-intents`; MoneyGram cash-in/out via `/api/partner/stellar/deposits|withdrawals` (proposed).
-- SDP batch upload via `/api/partner/stellar/payout-batches` (proposed).
-- Status dashboard:
-  - `draft`, `queued`, `onchain_pending`, `onchain_complete`, `local_settled`, `failed`.
-
-### 15.2 `Fiatsend app` (Core orchestration + consumer app APIs)
-
-- Consumer payment intent resolution from QR/link (`GET /api/public/payment-intents/:id` proposed).
-- Consumer approval and pay flow via Partner API internal routes (`/v1/internal/payment-intents/*`, §8.1).
-- Ledger writes, settlement routing, and webhook dispatch (orchestration; may share console server in tranche 1).
-- Shared auth/session and risk policy enforcement.
-
-### 15.2a `fiatsend-partner-api` (External programmatic API)
-
-- Shipped: `/v1/withdrawals`, `/v1/payment-intents`, `/v1/webhooks`, `/v1/transactions` (§8.1).
-- Stellar extension: `/v1/payment-intents/:id/submissions` for on-chain collect verification.
-
-### 15.3 `fiatsend-functions` (Async + integration edges)
-
-- Webhook handlers (chain/disbursement/provider callbacks).
-- Reconciliation workers and retry queues.
-- Scheduled consistency checks for stale in-flight operations.
-
-### 15.4 External dependencies
-
-- Stellar Wallets Kit for merchant wallet session/connectivity.
-- Stellar Anchor Platform (SEP-24) for hosted deposit/withdraw and transfer lifecycle.
-- Stellar Disbursement Platform for disbursement job execution.
-- Stellar network/Horizon/RPC for transaction visibility and confirmations.
-- Existing local payout partners for fiat settlement.
-
-### 15.5 Ledger Service (Canonical Source of Truth)
-
-The **Fiatsend Ledger Service** is the single authoritative read model for all merchant-visible financial state. Stellar adapters, SDP, MoneyGram callbacks, and local settlement workers **propose** transitions; only the Ledger Service **commits** them.
-
-**Owns (canonical):**
-
-- Merchant balances (`USDC`, `USDT`, `GHS` views derived from ledger entries)
-- Payment intent status (normalized lifecycle)
-- Payout batch and item status (including dual leg: chain + local)
-- Settlement references (`stellar_tx_hash`, `mobile_money_reference`, anchor transfer id)
-- Immutable audit history and correlation IDs for every transition
-
-**Does not own:**
-
-- Raw Stellar Horizon responses (cached in `chain_tx` projection)
-- External provider session state (MoneyGram SEP-24 interactive flow URLs)
-- UI-only draft/upload validation state
-
-**Write path:** Orchestration API / workers call `LedgerService.applyTransition(command)` with idempotency key. Adapters never write merchant balances directly.
-
-**Read path:** Console, Partner API, and webhooks read **only** from Ledger projections (or materialized views fed by ledger events). Horizon/SDP/MoneyGram polling results update ledger via workers, not via direct API exposure.
-
-```mermaid
-flowchart LR
-    AP[Stellar Adapters] --> CMD[Transition Commands]
-    FN[fiatsend-functions] --> CMD
-    SET[Local Settlement] --> CMD
-    CMD --> LGR[Ledger Service]
-    LGR --> VIEWS[Merchant API Views]
-    LGR --> WH[Outbound Webhooks]
-    LGR --> AUD[Audit Store]
-```
-
----
-
-## 16) End-to-End Domain Model
-
-```mermaid
-erDiagram
-    BUSINESS ||--o{ STELLAR_WALLET_BINDING : owns
-    BUSINESS ||--o{ PAYMENT_INTENT : creates
-    BUSINESS ||--o{ PAYOUT_BATCH : initiates
-    PAYOUT_BATCH ||--o{ PAYOUT_ITEM : contains
-    PAYOUT_ITEM ||--o| DISBURSEMENT_JOB : maps_to
-    PAYMENT_INTENT ||--o| CHAIN_TX : settles_with
-    PAYOUT_ITEM ||--o| CHAIN_TX : settles_with
-    PAYOUT_ITEM ||--o| LOCAL_SETTLEMENT : settles_locally
-    BUSINESS ||--o{ AUDIT_EVENT : emits
-
-    BUSINESS {
-      string business_id PK
-      string status
-      string kyc_tier
-    }
-    STELLAR_WALLET_BINDING {
-      string binding_id PK
-      string business_id FK
-      string stellar_account
-      string network
-      string provider
-      string state
-    }
-    PAYMENT_INTENT {
-      string intent_id PK
-      string business_id FK
-      string asset_code
-      decimal amount
-      string status
-      string terminal_ref
-    }
-    PAYOUT_BATCH {
-      string batch_id PK
-      string business_id FK
-      string mode
-      string status
-      int total_items
-    }
-    PAYOUT_ITEM {
-      string item_id PK
-      string batch_id FK
-      decimal amount
-      string destination_type
-      string status
-    }
-    DISBURSEMENT_JOB {
-      string disbursement_id PK
-      string external_job_id
-      string status
-    }
-    CHAIN_TX {
-      string tx_id PK
-      string tx_hash
-      string network
-      int confirmations
-      string finality_state
-    }
-    LOCAL_SETTLEMENT {
-      string settlement_id PK
-      string provider_ref
-      string status
-      string completed_at
-    }
-    AUDIT_EVENT {
-      string event_id PK
-      string aggregate_type
-      string aggregate_id
-      string event_type
-      string correlation_id
-    }
-```
-
-### 16.1 Production API to Stellar/Ledger Object Mapping
-
-Fiatsend's live Partner API and console objects map into the Stellar program without breaking idempotency or webhook contracts. External field names stay stable; internal ledger aggregates gain Stellar-specific projections.
-
-#### Withdrawals (Partner API `POST /withdrawals`)
-
-| Production field | Ledger / Stellar aggregate | Notes |
-|------------------|---------------------------|-------|
-| `withdrawal_id` | `payout_item.item_id` (1:1) | Primary external ID preserved |
-| `reference_id` | Idempotency key on `payout_item` + SDP external ref | Duplicate `reference_id` returns original item |
-| `status` (`pending`, `processing`, `completed`, `failed`) | Normalized via payout item state machine | See mapping table below |
-| `on_chain_tx_hash` | `chain_tx.tx_hash` | Set when SDP/chain leg completes |
-| `mobile_money_reference` | `local_settlement.provider_ref` | Set only on `local_settled` |
-| Webhook `withdrawal.*` | Emitted from ledger transition | Event payload keeps existing shape |
-
-| Partner API `status` | Payout item (internal) | Chain leg | Local leg |
-|----------------------|------------------------|-----------|-----------|
-| `pending` | `queued` | — | — |
-| `processing` | `onchain_pending` or `local_settlement_pending` | in flight | in flight |
-| `completed` | `local_settled` | `onchain_complete` | success |
-| `failed` | `onchain_failed` or `local_failed` | terminal | terminal |
-
-#### Payment intents (Partner API + consumer QR flow)
-
-| Production field | Stellar aggregate | Notes |
-|------------------|-------------------|-------|
-| `payment_intent_id` | `payment_intent.intent_id` | Unchanged |
-| `merchant_reference` | Idempotency key + SEP memo / tx memo binding | Must match verified on-chain memo |
-| `status` (approval workflow) | Ledger intent state + `chain_tx` projection | Stellar path adds `onchain_pending`, `paid` |
-| Webhook `payment_intent.*` | Ledger-emitted | Approval events unchanged; `paid` adds `on_chain_tx_hash` in payload |
-
-| Partner API `status` | Stellar payment intent (internal) |
-|----------------------|-----------------------------------|
-| `pending_approval` | `created` / `awaiting_payment` |
-| `approved` | `awaiting_payment` (ready for chain pay) |
-| `completed` | `paid` (+ chain tx verified) |
-| `failed` / `rejected` / `cancelled` / `expired` | `failed` / `expired` |
-
-#### SEP-24 MoneyGram transfers (new, console)
-
-| Console action | Ledger aggregate | External ref |
-|----------------|------------------|--------------|
-| Cash-in (deposit) | `offramp_transfers` (direction=`deposit`) | MoneyGram `transfer_id` |
-| Cash-out (withdraw) | `offramp_transfers` (direction=`withdraw`) | MoneyGram `transfer_id` |
-
-#### Webhook and settlement status
-
-- **Webhook event type** is derived from ledger transition name (e.g. `withdrawal.completed` only when `local_settled`).
-- **Settlement status** exposed to merchants is always the ledger-normalized status, never raw SDP or anchor enum values.
-- **Dual status in API responses:** optional `chain_status` and `local_status` fields for integrators that need both legs; top-level `status` remains the merchant promise field (`local_settled` → `completed` for withdrawals).
-
----
-
-## 17) Wallets Kit Integration Architecture
-
-### 17.1 Wallet Binding Flow
-
-```mermaid
-sequenceDiagram
-    participant Biz as Business User
-    participant UI as Fiatsend console
-    participant API as Wallet Binding API
-    participant WK as Stellar Wallets Kit
-    participant DB as Fiatsend Data Store
-    participant AUD as Audit/Event Store
-
-    Biz->>UI: Connect Stellar wallet
-    UI->>WK: Initialize session + connect
-    WK-->>UI: walletAddress + provider metadata
+    participant API as Console API
+    participant DB as Postgres
+
+    B->>UI: Connect wallet
+    UI->>WK: Connect (Freighter or xBull)
+    WK-->>UI: Public key + network
     UI->>API: POST /api/partner/stellar/wallets/bind
-    API->>API: Validate partner status (verified/active)
-    API->>DB: Upsert wallet_binding
-    API->>AUD: Emit wallet.binding.created
-    API-->>UI: binding status + network + capabilities
+    API->>DB: Store challenge (nonce, 10-minute TTL)
+    API-->>UI: Challenge message
+    UI->>WK: signMessage(challenge)
+    UI->>API: POST /wallets/verify-signature
+    API->>API: Verify SEP-53 signature (ed25519)
+    UI->>API: POST /wallets/bind (challengeId)
+    API->>DB: Consume challenge, upsert binding, audit log
+    API-->>UI: Binding + Horizon USDC balance, trustline, funded flags
 ```
 
-### 17.2 Guardrails
-
-- One active wallet binding per business/environment by default.
-- Require explicit rebind flow with cooldown and audit trail.
-- Store provider/session metadata only; never persist wallet private keys.
-- Enforce allowlist by network (`testnet`, `mainnet`) and supported assets.
+- **Wallets:** Freighter and xBull. Albedo is excluded in the console because it cannot sign the bind message; the customer pay page supports Freighter, Albedo and xBull because it signs transactions, not messages.
+- **Guardrails:** one active binding per business per network; the client checks the wallet is on the expected network; every step is audit-logged and rate-limited; unbind is explicit.
+- **Mainnet requirements for payment links:** the bound account must be funded and hold a USDC trustline.
+- **Access gating:** by environment (sandbox → testnet), an allow-mainnet flag, and a partner access mode (all active partners, allowlist, or admin only).
 
 ---
 
-## 18) Merchant Payment Flow Architecture (Consumer -> Business)
+## 7) Payment Acceptance: Payment Intents, Pay Page, Checkout, Invoices
+
+### 7.1 Payment link flow
 
 ```mermaid
 sequenceDiagram
-    participant Biz as Business (Console)
-    participant Console as Fiatsend console
-    participant Main as Fiatsend app API
-    participant App as Consumer App
-    participant Chain as Stellar Network
-    participant Worker as fiatsend-functions
-    participant Ledger as Ledger Service
+    participant Biz as Business (console)
+    participant C as Console API
+    participant P as Partner API
+    participant Pay as pay.fiatsend.com
+    participant Web as app.fiatsend.com API
+    participant W as Customer wallet
+    participant H as Horizon
 
-    Biz->>Console: Create payment link/QR (USDC)
-    Console->>Main: POST /v1/payment-intents
-    Main->>Ledger: Create intent(pending_approval)
-    Main-->>Console: payment_intent_id + qr payload
-
-    App->>Main: GET /v1/internal/payment-intents (consumer_phone)
-    App->>Main: POST /v1/internal/payment-intents/:id/decision (approve)
-    App->>Chain: Submit USDC payment transaction
-    App->>Main: POST /v1/payment-intents/:id/submissions (tx_hash)
-    Main->>Ledger: chain_status=onchain_pending
-
-    Worker->>Chain: Poll/subscribe for finality
-    Chain-->>Worker: tx confirmed/failed
-    Worker->>Ledger: Update canonical chain status
-    Ledger-->>Console: Real-time status update
+    Biz->>C: Create payment link (amount, currency, expiry)
+    C->>P: POST /internal/payment-intents (memo, destination, locked FX, fee split)
+    P-->>C: payment_intent_id + payment link + QR payload
+    C-->>Biz: Link / QR (optionally sent by WhatsApp or SMS)
+    Pay->>Web: POST /api/public/payment-intents/:id/session
+    Web->>P: decision = approve
+    Web-->>Pay: 1-hour guest token
+    W->>H: Signed USDC payment (Wallets Kit or SEP-7 QR)
+    Pay->>Web: POST .../submission (tx_hash)
+    Web->>P: /submissions (tx_hash)
+    P->>H: Verify transaction
+    P-->>Pay: paid
+    P-->>Biz: Webhook payment_intent.*
 ```
 
-### 18.1 Payment intent API contract (aligned)
+- **Currencies:** intents can be priced in GHS or USDC; GHS intents show a locked FX rate and the customer pays USDC.
+- **Expiry:** businesses choose 1 hour, 6 hours, 24 hours, 3 days or 7 days (default 7 days). Expiry is applied when an intent is read; an intent already in `onchain_pending` does not expire.
+- **Fees:** the business chooses who pays the platform fee (business or customer).
+- **Pay page:** polls every 3 seconds while `onchain_pending`, shows an expiry countdown, and supports an embed mode (`?embed=1`) that reports status to the parent page with `postMessage` and honours `success_url` / `cancel_url`.
+- **Logged-in consumers** can also pay from their Fiatsend GHS balance in the web app; that path settles between Fiatsend balances and does not move USDC on-chain.
 
-Uses **Partner API** paths (§8.1). Console and consumer app are clients; Ledger Service owns committed state.
+### 7.2 On-chain verification (Partner API)
 
-**Create (merchant / console / server-side integration)**
+| Check | Rule |
+|---|---|
+| Transaction | Successful and in a closed ledger on the intent's network |
+| Memo | Text memo equals the intent's Stellar memo (derived from `merchant_reference`) |
+| Destination | Payment operation to the merchant's bound account |
+| Asset | Asset code and issuer match the allowlisted USDC issuer for the network |
+| Amount | At least the intent amount; underpayment is rejected |
+| Timing | Transaction not older than the intent (2-minute skew allowed) |
+| Replay | A transaction hash already used by another intent is rejected |
+| Missed submissions | A Cloud Scheduler job calls `/internal/payment-intents/reconcile-onchain` every minute and matches recent payments by memo, with 2 minutes of grace after expiry |
 
-- `POST /v1/payment-intents` (Bearer `fs_*`)
-  - Input: `amount`, `currency`, `consumer_phone`, `merchant_reference`, optional `terminal_id`, `description`, `metadata`
-  - Output: `payment_intent_id`, `status` (`pending_approval`), `expires_at`, …
-  - Idempotency: same `merchant_reference` → `200` with original intent
+### 7.3 Website checkout
 
-**Consumer approval (internal)**
+- **Payment buttons:** reusable checkout links per product or price, with a public page per link.
+- **Embed:** `fiatsend-checkout.js` opens checkout in a popup from the merchant's own button.
+- **API:** `POST/GET /api/v1/checkout/sessions` on the console, proxied as `/v1/checkout/sessions` on the Partner API.
+- **Webhook:** `checkout.session.completed`, signed with HMAC-SHA256.
+- Checkout sessions are stored as invoices (`source = 'checkout'`), so the same payment methods and confirmation rules apply.
 
-- `POST /v1/internal/payment-intents/:id/decision`
-  - Header: `X-Internal-Token`
-  - Body: `{ "decision": "approve" | "complete" | "reject" | "fail", "reason"?: string }`
-  - Emits `payment_intent.approved` / `.completed` / etc.
+### 7.4 Invoices and manual payment methods
 
-**Stellar payment submission (proposed extension)**
-
-- `POST /v1/payment-intents/:id/submissions`
-  - Input: `tx_hash`, `wallet_address`, optional `client_timestamp`
-  - Output: `chain_status`: `onchain_pending`
-  - Worker verifies per §18.2; ledger moves to `paid`; webhook `payment_intent.completed` includes `on_chain_tx_hash`
-
-**Read**
-
-- `GET /v1/payment-intents/:id`
-  - Shipped: approval workflow fields
-  - Proposed additions: `chain_status`, `on_chain_tx_hash`, `local_status` (when applicable)
-
-**QR / public resolve (proposed)**
-
-- `GET /api/public/payment-intents/:id` on console or app — returns payee address, amount, asset, memo encoding for Wallets Kit / wallet app
-
-### 18.2 On-Chain Transaction Verification (Payment Intents)
-
-Before any payment intent moves to `paid`, the verification worker must validate the submitted `txHash` against the intent record and merchant binding. **No field is optional for production.**
-
-| Check | Requirement |
-|-------|-------------|
-| Network | Matches intent environment (`testnet` / `mainnet`) |
-| Finality | Meets configured confirmation threshold (e.g. ≥ 1 ledgers closed on target network) |
-| Destination | Credit account = merchant `stellar_wallet_bindings.stellar_account` for `business_id` |
-| Asset code | Matches `payment_intent.asset_code` (e.g. `USDC`) |
-| Issuer | Matches Fiatsend allowlisted issuer for asset + network |
-| Amount | `>=` intent amount (overpay allowed; underpay rejects) |
-| Memo / reference | Matches `intent_id` or configured `merchant_reference` encoding |
-| Business binding | Tx must not credit a wallet bound to a different `business_id` |
-| Replay | Same `tx_hash` cannot satisfy two intents |
-| Failure modes | Failed/expired chain tx → `failed`; do not emit `payment_intent.completed` webhook |
-
-Verification runs in `fiatsend-functions` (poll/subscribe); results are applied via `LedgerService.applyTransition` only.
+- Invoices and payment links can accept **Pay online with Fiatsend**, **mobile money** and **bank transfer**.
+- For mobile money and bank transfer, the customer pays the business directly and submits a claim (optional transaction ID); the business confirms or rejects it, and the customer is emailed if a claim is rejected.
+- Open invoices are checked for online payment on each cron tick.
 
 ---
 
-## 19) SDP Payout Architecture (Business -> Recipient)
+## 8) Deposits and Treasury
 
-```mermaid
-flowchart TD
-    A[Partner Creates Payout Batch] --> B[Validate Schema + KYB Tier + Limits]
-    B --> C[Recipient Risk/Compliance Checks]
-    C --> D[Create Internal Batch + Items]
-    D --> E[Create SDP Disbursement Job]
-    E --> F[Track SDP/Chain Status]
-    F --> G{On-chain Success?}
-    G -- No --> H[Mark Item Failed + Retry Policy]
-    G -- Yes --> I[Trigger Local Settlement]
-    I --> J{Settlement Success?}
-    J -- No --> K[Retry/Manual Ops Queue]
-    J -- Yes --> L[Mark local_settled]
-    L --> M[Webhook + Dashboard update]
-```
+### 8.1 Business USDC deposits (console)
 
-```mermaid
-sequenceDiagram
-    participant Biz as Business User
-    participant Console as Fiatsend console
-    participant API as Payout Orchestrator
-    participant CMP as Compliance Service
-    participant SDP as Stellar Disbursement Platform
-    participant Worker as fiatsend-functions
-    participant Local as Settlement Engine
+- Each business gets a memo ID on a pooled business treasury account; the console also shows the equivalent muxed address.
+- A watcher polls Horizon payments from a saved cursor. Cloud Scheduler triggers it every minute (two passes about 25 seconds apart), and businesses can trigger a manual sync.
+- A matched payment is credited in one database transaction, idempotent per payment, and the business is emailed. Payments with an unknown partner-range memo go to an admin queue to assign or dismiss.
+- A database trigger writes every balance change to `partner_balance_audit`.
+- Businesses can also deposit USDC or USDT on Polygon and BSC to per-business custodial EVM addresses.
 
-    Biz->>Console: Upload single/bulk payout
-    Console->>API: POST /api/partner/stellar/payout-batches
-    API->>CMP: Run sanctions/limits checks
-    CMP-->>API: pass/fail
-    API->>SDP: Create disbursement
-    SDP-->>API: disbursementId
-    API-->>Console: batch queued
+### 8.2 Consumer deposits (functions and web app)
 
-    Worker->>SDP: Poll/callback consume
-    SDP-->>Worker: item statuses
-    Worker->>API: update payout items
-    Worker->>Local: trigger fiat settlement when chain complete
-    Local-->>Worker: settlement result
-    Worker->>API: final status
-    API-->>Console: updated dashboard + webhook dispatch
-```
+- **Stellar:** a pooled treasury with consumer memo IDs; a watcher in `fiatsend-functions` polls Horizon every 2 minutes, credits exactly once, and records unmatched payments.
+- **EVM:** USDT/USDC deposits on BSC and Polygon are detected by webhooks, block scanners and confirmation workers, then credited to the Firestore ledger.
 
-### 19.1 SDP Deployment Model and Anchor Strategy
+### 8.3 Treasury operations
 
-This section defines the operational model for SEP-24 + SDP and how local-currency settlement is closed in Fiatsend's ledger.
-
-### 19.1.1 Deployment model
-
-- **Self-hosted SDP stack by Fiatsend** in a Fiatsend-managed cloud environment (separate testnet and mainnet deployments).
-- **Rationale**:
-  - direct control over KYC/compliance integrations and webhook security boundaries,
-  - operational control for payout retry/reconciliation workers,
-  - reduced dependency risk during milestone execution.
-- **Hosted SDP option** remains a future optimization, but is not assumed in SCF43 critical path.
-
-### 19.1.2 Anchor strategy for local-currency settlement leg
-
-Fiatsend acts as the business integration layer to **MoneyGram** as the regulated anchor/off-ramp provider exposing SEP-24 deposit (cash-in), withdraw (cash-out), and transfer lifecycle APIs.
-
-- **On-chain leg**: Stellar asset movement and transaction finality are tracked via SDP and chain observers.
-- **Off-chain local-currency leg**: once payout state reaches `onchain_complete`, Fiatsend triggers mobile-money settlement through its local payout partners.
-- **Status model**: Fiatsend keeps on-chain and local settlement statuses distinct (`onchain_complete` is not equal to `local_settled`).
-
-### 19.1.3 Reconciliation close process (on-chain -> mobile money)
-
-Fiatsend closes reconciliation using a dual-reference approach:
-
-1. persist `stellar_tx_hash` / disbursement reference from SDP,
-2. persist `local_provider_ref` from mobile-money rail,
-3. correlate both under one internal payout item ID and immutable audit event chain.
-
-Closure rules:
-
-- Move to `local_settled` only when:
-  - on-chain state is final/complete, and
-  - local settlement provider confirms success.
-- Keep `local_settlement_pending` if only one side is complete.
-- Move to `local_failed` and manual operations queue on timeout/terminal provider failure.
-- Run scheduled reconciliation to detect drift between:
-  - SDP/chain-complete records and
-  - local provider settlement confirmations.
-
-### 19.1.4 Operational ownership and capacity
-
-- `fiatsend-app`: API orchestration, idempotency, and payout state transitions.
-- `fiatsend-functions`: webhook ingestion, retries, dead-letter processing, and scheduled reconciliation.
-- Operations/compliance: exception queue handling and settlement break resolution.
-
-No smart-contract engineering capacity is required for SCF43 delivery under this model.
+- Sweeps, withdrawal reviews and batch sweeps run from the admin console and require a second approver (maker-checker approvals queue).
+- Business swaps from USDC/USDT to the internal GHS balance are available in production with a 3% fee and credit only what was actually swept.
 
 ---
 
-## 20) State Machines (Canonical)
+## 9) Data Model
 
-### 20.1 Payment Intent
+Main tables and collections in use:
+
+| Store | Tables / collections | Purpose |
+|---|---|---|
+| Console Postgres | `partners` (balances per currency and environment, `stellar_memo_id`, payment-link settings) | Business accounts and balances |
+| | `stellar_wallet_bindings`, `stellar_bind_challenges` | Wallet binding |
+| | `stellar_memo_counters`, `stellar_deposit_cursors`, `stellar_unmatched_deposits` | Pooled deposits |
+| | `partner_invoices`, `partner_invoice_customers`, `partner_invoice_settings`, `partner_invoice_claims`, `partner_checkout_links` | Invoices, payment links with manual methods, website checkout |
+| | `partner_balance_audit`, `audit_log`, `system_pause_state` | Audit and emergency pause |
+| Partner API Postgres | `payment_intents`, `payout_batches`, payout items, `api_keys`, webhooks, virtual accounts and ledger entries | Intents, payouts, integrations |
+| Firestore | User ledgers (GHS and stablecoins), withdrawals, guest payment sessions, `engagement_inbox`, `saved_recipients`, unmatched Stellar deposits | Consumer accounts |
+| SDP Postgres | Upstream SDP schema plus Fiatsend's pooled-address change | Disbursements and receivers |
+
+Payout batches and items are held by the Partner API; the console reads them through internal routes.
+
+---
+
+## 10) API Surfaces
+
+| Surface | Base URL | Auth |
+|---|---|---|
+| Partner API | `https://api.fiatsend.com/v1` | `Authorization: Bearer fs_live_*` |
+| Partner API (sandbox) | `https://sandbox.fiatsend.com/v1` | `Authorization: Bearer fs_test_*` |
+| Console API | `https://console.fiatsend.com/api` | Session cookie (team roles) |
+| Consumer web API | `https://app.fiatsend.com/api` | Session; public payment-intent routes use a guest token |
+| Mobile API | Cloud Functions `mobileApi` | Mobile session |
+
+### 10.1 Partner API (`/v1`)
+
+| Group | Routes |
+|---|---|
+| Health and reference | `GET /health`, `/rates`, `/supported-networks`, `/limits` |
+| Withdrawals (GHS mobile money) | `POST /withdrawals`, `GET /withdrawals/:id`, `GET /transactions` |
+| Payment intents | `POST /payment-intents`, `GET /payment-intents/:id`, `POST /payment-intents/:id/cancel`, `POST /payment-intents/:id/submissions` |
+| Payout batches (SDP) | `POST /payout-batches`, `GET /payout-batches`, `GET /payout-batches/:id` |
+| Virtual accounts | `GET /accounts`, `GET /accounts/:id/ledger` |
+| Checkout sessions | `POST /checkout/sessions`, `GET /checkout/sessions/:id` |
+| Webhooks | `POST /webhooks`, `GET /webhooks`, `DELETE /webhooks/:id`, `GET /webhook-deliveries[/:event_id]` |
+
+Idempotency uses body fields: `reference_id` for withdrawals and payout items, `merchant_reference` for payment intents; a repeat returns `200` with the original record. Internal routes (`/internal/*`, internal token) serve the console, web app and schedulers: payment-intent create, decision, submissions and on-chain reconciliation; payout-batch sync, pause and resume; local settlement; Stellar metrics; SeevCash webhook.
+
+### 10.2 Console API (selected)
+
+| Group | Routes |
+|---|---|
+| Wallet binding | `GET /api/partner/stellar/wallets`, `POST /wallets/bind`, `/wallets/verify-signature`, `/wallets/unbind` |
+| Payment links | `POST /api/partner/stellar/payment-intents`, notify (WhatsApp/SMS), `GET /api/partner/stellar/ghs-quote` |
+| Payouts | `POST/GET /api/partner/stellar/payout-batches`, pause/resume, claim link, resend invite, payout credits, recipient book |
+| Deposits | `/api/partner/deposit/sync`, `/api/internal/stellar/deposits/scan` (scheduler) |
+| Invoices and checkout | `/api/partner/invoices/*`, `/api/partner/payment-links`, `/api/partner/checkout/links|sessions`, public `/api/public/invoices/:token`, `/api/public/checkout/:token` |
+| Checkout API | `POST/GET /api/v1/checkout/sessions` (API key) |
+| Account | auth with 2FA, KYB via Didit, team and roles, API keys, webhooks, settings |
+
+### 10.3 Mobile API (`mobileApi`, selected groups)
+
+Auth and 2FA; profile and mobile money; custodial balances and deposit addresses; USDT/USDC to GHS conversion; Stellar cash-out (`/cashout/stellar/*`: info, wallet, quote, profile, authorize, start, status, history, salary); SDP claims (`/stellar/sdp/claims/pending`, `/stellar/sdp/claim/start`); merchant payment intents; withdrawals; notification inbox (`/me/notifications`); saved recipients (`/me/recipients`); internal treasury operations used by the admin console.
+
+### 10.4 Inbound provider webhooks
+
+| Source | Receiver |
+|---|---|
+| SeevCash | `seevcashWebhookReceiver` (signature verified) and Partner API `/internal/webhooks/seevcash` |
+| Didit (KYC/KYB) | `diditWebhookReceiver`, console `/api/webhooks/didit-kyb` (HMAC, 300-second window) |
+| Moolre | Web app `/api/webhooks/moolre` |
+| EVM deposits | Alchemy/Blockradar webhook receivers |
+| SDP | Not a webhook: statuses are polled every minute |
+
+---
+
+## 11) State Machines
+
+### 11.1 Payment intent (Partner API)
 
 ```mermaid
 stateDiagram-v2
-    [*] --> created
-    created --> awaiting_payment : link opened
-    awaiting_payment --> onchain_pending : tx submitted
-    onchain_pending --> paid : chain confirmed
-    onchain_pending --> failed : chain failed/expired
-    awaiting_payment --> expired : ttl elapsed
-    paid --> [*]
+    [*] --> pending_approval
+    pending_approval --> approved : guest session or app approval
+    approved --> onchain_pending : tx submitted
+    onchain_pending --> paid : verified on Horizon
+    onchain_pending --> failed : verification failed
+    paid --> completed : settled to merchant
+    pending_approval --> cancelled
+    pending_approval --> rejected
+    pending_approval --> expired : TTL elapsed
+    approved --> expired : TTL elapsed
+    completed --> [*]
     failed --> [*]
     expired --> [*]
+    cancelled --> [*]
+    rejected --> [*]
 ```
 
-### 20.2 Payout Item
+### 11.2 Payout item (SDP)
 
 ```mermaid
 stateDiagram-v2
-    [*] --> drafted
-    drafted --> queued
+    [*] --> queued
     queued --> onchain_pending
     onchain_pending --> onchain_complete
     onchain_pending --> onchain_failed
-    onchain_complete --> local_settlement_pending
-    local_settlement_pending --> local_settled
-    local_settlement_pending --> local_failed
+    onchain_pending --> claim_expired : unclaimed
+    onchain_complete --> local_settled : cedis delivered
+    onchain_complete --> local_failed
+    claim_expired --> [*] : credited back to business
     local_settled --> [*]
     onchain_failed --> [*]
     local_failed --> [*]
 ```
 
----
+`onchain_complete` never implies `local_settled`. The merchant-facing `completed` status for a withdrawal means local delivery.
 
-## 21) Reliability, Retry, and Reconciliation
+### 11.3 Mobile cash-out
 
-### 21.1 Outbox + worker model
-
-```mermaid
-flowchart LR
-    API[Write Business Event + State Change] --> OUTBOX[(Outbox Table)]
-    OUTBOX --> WRK[Worker Pull/Claim]
-    WRK --> EXT[External Call: SDP/Chain/Settlement]
-    EXT --> WRK
-    WRK --> ST[(State Store)]
-    WRK --> AUD[(Audit + Metrics)]
-    WRK --> DLQ[(Dead Letter Queue)]
-```
-
-### 21.2 Policy
-
-- Exponential retry with jitter for transient network/provider failures.
-- Hard failure thresholds route items into manual operations queue.
-- Scheduled reconciliation compares:
-  - internal `onchain_pending` records vs chain confirmations
-  - internal `local_settlement_pending` vs provider settlement status
-- Idempotency keys on all create/mutate endpoints and worker handlers.
-
-### 21.3 Stuck-State Matrix and Recovery
-
-Fast settlement and webhook SLAs require explicit handling when chain, anchor, or local rails diverge. All recovery actions write through the Ledger Service and emit audit events.
-
-| Stuck state | Detection | Automated action | Manual / ops |
-|-------------|-----------|------------------|--------------|
-| Pending chain tx | `onchain_pending` > SLA; Horizon shows no tx | Re-poll Horizon; if tx missing, reject submission and notify payer | Reconcile against wallet/explorer; reopen intent if valid late tx |
-| Chain success, local payout failed | `onchain_complete` + `local_failed` | Retry local settlement (max 3); alert ops | Dual-control: retry, refund on-chain credit, or mark `local_settled` with evidence |
-| Delayed provider callback | Internal ahead/behind provider status | Scheduled reconciliation job compares provider API vs ledger | Force status sync from provider authoritative record |
-| Duplicate webhook / callback | Same `event_id` or provider ref seen twice | Idempotent handler: no-op if transition already applied | Investigate if amounts differ |
-| Duplicate tx hash claim | Second intent submits same hash | Reject second submission | Link to original intent |
-| Anchor (MoneyGram) complete, ledger not updated | SEP-24 `completed` in provider, ledger stale | Worker applies credit/debit from provider poll | Manual ledger adjustment with ticket + audit |
-| Batch partially stuck | Mixed item terminal states | Continue successful items; isolate failures | Export failed rows; re-submit as new batch with new `reference_id`s |
-
-**Reconciliation cadence:** near-real-time workers for in-flight items; nightly ledger vs chain vs mobile-money vs MoneyGram transfer close.
-
-**Runbooks (required before mainnet):** chain-pending timeout, chain-complete/local-failed, webhook storm/duplicate delivery, manual settlement override, batch partial failure export.
-
-### 21.4 Webhook Delivery Contract (Outbound + Inbound)
-
-#### Outbound (Fiatsend → merchant endpoints)
-
-Aligned with production Partner API behavior; Stellar program extends the same contract.
-
-| Mechanism | Specification |
-|-----------|----------------|
-| Signature | `HMAC-SHA256` over raw JSON body; header `X-Fiatsend-Signature: sha256=<hex>` |
-| Event identity | `event.id` (unique per emission); header `X-Fiatsend-Delivery` per attempt |
-| Event type | Header `X-Fiatsend-Event`; body `type` must match |
-| Timestamp | `created_at` ISO 8601 in body; receivers should reject if \|now − created_at\| > **5 minutes** |
-| Replay protection | Merchants should store processed `event.id` for 7 days; duplicates return `200` without side effects |
-| Retry policy | Up to **3** attempts; backoff **1 s, 4 s, 16 s**; 10 s HTTP timeout |
-| Ordering | Not guaranteed across events; merchants use `created_at` + `event.id` for ordering; state machine is source of truth |
-| Idempotent emission | Same ledger transition must not emit two distinct success events for the same aggregate |
-
-#### Inbound (SDP / MoneyGram / chain observers → Fiatsend)
-
-| Mechanism | Specification |
-|-----------|----------------|
-| Signature verification | Provider-specific HMAC or JWT per integration guide |
-| Timestamp window | Reject callbacks outside **5 minute** skew |
-| Nonce / replay | Store provider `event_id` or `(transfer_id, status)` tuple; duplicates ack `200` no-op |
-| Processing | Async: ack quickly, enqueue to outbox, worker applies ledger transition |
-| Failure | Return `5xx` only when enqueue fails; otherwise `200` after durable receipt |
+`quoted` → `authorized` → `submitted` (USDC sent to the anchor) → `pending_anchor` → `completed` | `failed`, following the SeevCash transaction status.
 
 ---
 
-## 22) Security and Compliance Architecture
+## 12) Reliability, Retry and Reconciliation
 
-### 22.1 Security controls
+| Mechanism | Implementation |
+|---|---|
+| Idempotency | Body references on all money-moving creates; deposit credits idempotent per payment; one-time challenge consumption |
+| On-chain reconciliation | Partner API reconcile job every minute for payment intents |
+| Deposit watchers | Console every minute; functions every 2 minutes; unmatched deposits queued for admin |
+| SDP status | Polled every minute (`sdpPollWorker`) |
+| Local settlement | `localSettlementWorker` every minute; `payoutReconciliationWorker` and `withdrawalEscalationWorker` every 5 minutes |
+| Withdrawal retries | Web app cron retries failed Moolre payouts |
+| Outbound webhooks | In-process delivery with 3 attempts; see 12.1 |
+| Emergency pause | Admin can pause all fund-moving routes in the console |
 
-- **AuthN/AuthZ**: partner role + status gates already used in console APIs.
-- **Data protection**:
-  - encrypt recipient destination identifiers at rest.
-  - redact PII in logs; store only masked variants in event streams.
-- **Webhook authenticity**: see §21.4 (HMAC, timestamp window, replay/nonces, retry and duplicate handling).
-- **Secrets management**: provider and webhook secrets in a secrets manager (not env files in production); testnet/mainnet segregation; automated rotation schedule.
-- **Least privilege**: service accounts per adapter (Horizon read, SDP submit, anchor callback) with minimal IAM scopes.
-- **Operational security**: 2FA mandatory for console operators; dual-control for payout overrides and manual ledger adjustments.
-- **PII**: encrypt recipient phone/identifiers at rest; redact in logs and metrics; masked values only in event streams.
+Failures surface in admin queues, Slack alerts and escalation workers.
 
-### 22.2 Compliance controls
+### 12.1 Outbound webhook contract
 
-- KYB level gates max payout amount, batch size, and daily velocity.
-- Rule-engine decision records persisted with rule version metadata.
-- Manual override requires dual-control and immutable audit event.
-
-### 22.3 Production Security and Compliance Checklist
-
-| Area | Production requirement |
-|------|------------------------|
-| Key rotation | Webhook signing secrets and API keys rotated on schedule; zero-downtime dual-secret window |
-| Secrets | GCP/AWS secrets manager (or equivalent); no secrets in repo or plaintext CI vars |
-| IAM | Least-privilege roles per service; break-glass accounts audited |
-| Operators | 2FA on all production console access; separate ops vs finance roles |
-| PII | Field-level encryption for destination identifiers; log redaction enforced in workers |
-| Sensitive overrides | Manual `local_settled` / balance adjustment requires two approvers + ticket id in audit |
-| Environments | Hard separation of testnet/mainnet data, bindings, and webhook endpoints |
-
----
-
-## 23) Observability and Operational Excellence
-
-### 23.1 Telemetry standards
-
-- Correlation IDs propagated from UI request -> orchestration -> worker -> external provider.
-- Structured events by domain:
-  - `wallet.binding.*`
-  - `payment.intent.*`
-  - `payout.batch.*`, `payout.item.*`
-  - `settlement.*`
-
-### 23.2 Key SLOs
-
-- Payment finalization p95 (intent submission -> final state) <= 2 minutes.
-- Payout status freshness p95 (external update -> console visible) <= 30 seconds.
-- Reconciliation drift < 0.1% of daily volume.
-- Webhook delivery success >= 99.5% (with retries).
-
----
-
-## 24) Environment and Release Strategy
-
-```mermaid
-flowchart LR
-    DEV[Dev Sandbox] --> T1[Testnet Pilot]
-    T1 --> T2[Expanded Testnet Load]
-    T2 --> P1[Mainnet Limited Pilot]
-    P1 --> P2[Mainnet General Availability]
-```
-
-### 24.1 Tranche delivery mapping
-
-- **Tranche 1 (MVP)**
-  - Wallets Kit connect flow in console.
-  - Merchant payment links/QR generated with Stellar metadata.
-  - End-to-end demo from console to consumer payment.
-
-- **Tranche 2 (Testnet)**
-  - SDP integration for single + batch payout.
-  - Reconciliation workers and payout state machine in testnet.
-  - Batch test >= 20 recipients with visible status tracking.
-
-- **Tranche 3 (Mainnet)**
-  - Production rollout with guardrailed partner cohort.
-  - Local settlement orchestration with operational runbooks.
-  - Live transactions and measured business adoption targets.
-
----
-
-## 25) Engineering Work Breakdown (Implementation Plan)
-
-### Stream A: Wallets + Merchant Payments
-
-1. Add wallet binding schema + migration.
-2. Build Wallets Kit adapter and provider abstraction.
-3. Add payment intent APIs and QR payload signing.
-4. Add worker-based chain confirmation service.
-5. Add payment status webhooks and dashboard feed.
-
-### Stream B: SDP Payouts
-
-1. Add payout batch/item/disbursement tables.
-2. Build SDP adapter with strict idempotency.
-3. Add compliance pre-check service integration.
-4. Add local settlement trigger pipeline from on-chain completion.
-5. Add reconciliation jobs + manual operations tooling.
-
-### Stream C: Platform Readiness
-
-1. Feature flags, partner gating, and limits config.
-2. Telemetry dashboards + alerting + SLA alarms.
-3. Incident playbooks and on-call handoff docs.
-4. Security review, key rotation, and webhook signature hardening.
-
----
-
-## 26) Risk Register
-
-| Risk | Impact | Mitigation |
+| Item | Partner API | Console checkout |
 |---|---|---|
-| On-chain confirmation delays | Status staleness and user confusion | Async state model + clear ETA + reconciliation pollers |
-| External API instability (SDP/local rails) | Payout failures or duplicate attempts | Idempotency keys, retries with jitter, DLQ and manual queue |
-| Data inconsistency across services | Financial/audit risk | Dual-write prevention, outbox pattern, nightly ledger reconciliation |
-| Compliance false positives | Legitimate payout friction | Rule versioning + human review + override audit controls |
-| Mainnet launch regression | Business interruption | Canary rollout by partner cohort + rollback flags |
+| Signature | `X-Fiatsend-Signature: sha256=<hex>` (HMAC-SHA256 over the raw body) | `X-Fiatsend-Signature: <hex>` (HMAC-SHA256) |
+| Event header | `X-Fiatsend-Event` | `X-Fiatsend-Event` |
+| Delivery ID | `X-Fiatsend-Delivery` | Not sent |
+| Retries | 3 attempts, about 1 s then 4 s apart, 10 s timeout | 3 attempts, 1 s then 4 s, 8 s timeout, HTTPS only |
+
+Receivers should verify the signature, deduplicate on event ID and treat the latest status as authoritative.
 
 ---
 
-## 27) Decision Log (Initial ADRs)
+## 13) Security and Compliance
 
-1. **ADR-001: Async-first orchestration**
-   - Use worker-driven finalization; API requests return accepted state quickly.
-2. **ADR-002: Dual-status payout model**
-   - Separate `onchain_complete` from `local_settled`.
-3. **ADR-003: Environment isolation**
-   - Hard boundary between testnet and mainnet credentials, bindings, and limits.
-4. **ADR-004: Canonical ledger events**
-   - All final business state transitions must emit immutable audit events.
+- **KYB and KYC:** Didit for businesses (console) and consumers (web and mobile); verified status gates money movement.
+- **Authentication:** console 2FA by SMS/WhatsApp or email OTP; mobile PIN and 2FA; Cloudflare Turnstile on console signup and password reset.
+- **Authorization:** console team roles (owner, admin, finance, developer, viewer) with per-route permissions; admin console RBAC with nine roles and a maker-checker approvals queue for payouts, manual credits, deposit recovery, sweeps and Stellar withdrawals.
+- **Keys:** merchants keep their own keys (non-custodial binding); server-held consumer wallet keys are wrapped with Cloud KMS; API keys are stored hashed.
+- **Integrity:** signed webhooks in and out; one-time signed wallet challenges; replay protection on transaction hashes; balance audit trigger; audit log of console actions.
+- **Network isolation:** separate testnet and mainnet configuration on every surface, with a two-flag switch.
+- **Edge:** the console API sits behind Cloudflare with an origin secret, WAF rules and rate limits on signup and login.
 
----
-
-## 28) Success Criteria
-
-### 28.1 Technical
-
-- >= 99% successful payment intent finalization in pilot cohort.
-- >= 98% payout batch item completion excluding external rail downtime windows.
-- <= 0.1% reconciliation variance on daily close.
-
-### 28.2 Product/Business (aligned to SCF trajectory)
-
-- At least 25 businesses with active mainnet Stellar wallet bindings.
-- At least 100 real production payment/payout transactions.
-- At least 1 successful batch payout ($5k min) using Stellar rails with visible local settlement completion.
 
 ---
 
-## 29) Conclusion
+## 14) Observability
 
-This architecture extends Fiatsend's production payout platform with Stellar Wallets Kit (USDC funding + payments), MoneyGram SEP-24 (cash-in/cash-out), SDP (batch disbursement), and on-chain verification—while keeping GHS mobile-money settlement on existing rails.
+- Structured JSON logs per component in Cloud Run and Cloud Functions.
+- Slack alerts for withdrawals, deposits, authentication and console events.
+- SDP exposes Prometheus metrics.
+- Admin "Stellar Tranche 3" page: connected businesses, real transactions (paid intents plus on-chain-complete payout items), explorer links, SDP ↔ SeevCash reconciliation, SEP-6 cash-out reconciliation, pilot feedback, and address export for on-chain analytics.
 
-**Core commitments:**
-
-1. **Dual-ledger discipline** — `onchain_complete` ≠ `local_settled`; merchant-facing `completed` means local delivery where applicable.
-2. **Ledger Service as source of truth** — all balances, statuses, webhooks, and audit history commit through one service.
-3. **Stable production API boundary** — `withdrawal`, `payment_intent`, `reference_id`, and webhook shapes map cleanly to internal Stellar aggregates (§16.1).
-4. **Operational rigor** — stuck-state matrix, webhook contract (§21.3–21.4), tx verification (§18.2), SDP controls (§5.5), and pre-mainnet runbooks.
-
-The design is suitable for Fiatsend's current product direction. Priority before mainnet: tighten the integration boundary between the live Partner API and new Stellar components—especially ledger writes, state transitions, webhook reliability, reconciliation jobs, and operator runbooks.
 
 ---
+
+## 15) Infrastructure and Deployment
+
+| Component | Deployment |
+|---|---|
+| Console | Vercel frontend; Cloud Run API deployed from source; Cloud SQL Postgres; migrations applied by hand |
+| Partner API | Cloud Run (mainnet and sandbox services); Cloud Scheduler for reconciliation |
+| Functions | Firebase CLI deploy of `mobileApi`, webhook receivers and schedulers |
+| Web app, pay page, admin, docs | Vercel |
+| Developer portal | Cloudflare Workers |
+| Mobile | EAS store builds; over-the-air updates for JavaScript changes |
+| SDP | Helm on GKE Autopilot with Cloud SQL |
+
+Continuous integration runs for the console and mobile repositories (lint, typecheck, tests). Other services are deployed manually.
+
+---
+
+## 16) Tranche Delivery Status
+
+| Tranche | Scope | Status |
+|---|---|---|
+| 1 (MVP) | Wallets Kit connect in console; payment links/QR with Stellar metadata; end-to-end console → customer payment | Delivered |
+| 2 (Testnet) | SDP single and bulk payouts with claim flow; reconciliation; SeevCash anchor integration | Delivered on testnet |
+| 3 (Mainnet) | Payment links on mainnet with on-chain verification; pooled deposits; SeevCash SEP-6 cash-out; website checkout; SDP on mainnet | Delivered: all live on mainnet and tested with live transactions |
+
+---
+
+## 17) Roadmap
+
+| Area | Next step |
+|---|---|
+| Ledger | A single ledger service that owns every balance change across the console, Partner API and consumer ledgers, and emits events |
+| Async reliability | A shared outbox and dead-letter queue for webhooks and provider calls |
+| Payout controls | Per-tier limits and dual approval for large batches before SDP submission |
+| Webhooks | One signature format across the Partner API and checkout, with delivery ID and timestamp headers |
+| Verification | Configurable confirmation threshold per network |
+| Security | Field-level encryption of recipient identifiers, scheduled secret rotation, alert policies and on-call paging |
+| Engineering | CI for every service; end-to-end correlation IDs |
+| Anchors | A second GHS anchor for failover |
+
+---|---|---|
+| Ledger | Balances live in three stores (console Postgres, partner-API Postgres, Firestore) | Introduce a ledger service that owns balance changes and emits events |
+| Async reliability | No shared outbox or dead-letter queue | Outbox table plus worker for webhooks and provider calls |
+| Payout controls | No per-tier limits, approval for large batches, or automated retry in the console | Add tier limits and dual approval before SDP submit |
+| Console MoMo payout | The console's direct mobile-money payout route is not connected to a live rail | Route through the Partner API withdrawal flow |
+| Webhooks | Two signature formats; no timestamp header | One contract with delivery ID and timestamp |
+| Verification | No confirmation threshold beyond one closed ledger | Make the threshold configurable per network |
+| Security | Field-level encryption of recipient identifiers, scheduled secret rotation, alert policies | Add in that order |
+| Engineering | CI only on console and mobile; SDP fork changes not pushed to a Fiatsend remote | CI for all services; push the SDP fork |
+
+---
+
+## 18) Success Criteria
+
+Targets tracked on the admin Stellar Tranche 3 page:
+
+| Metric | Target |
+|---|---|
+| Businesses with an active mainnet Stellar wallet binding | 25 |
+| Real production transactions (paid intents plus on-chain-complete payout items) | 100 |
+| Successful batch payout volume using Stellar rails with local settlement | 5,000 USDC |
+| Payment intent finalization in the pilot cohort | ≥ 99% |
+| Payout item completion, excluding rail downtime | ≥ 98% |
+
+---
+
+## 19) Decision Log
+
+1. **ADR-001 Async-first.** Payments and payouts return quickly and finalize through workers and reconciliation jobs.
+2. **ADR-002 Dual status for payouts.** `onchain_complete` is kept separate from `local_settled`.
+3. **ADR-003 Environment isolation.** Separate testnet and mainnet configuration; mainnet needs two explicit flags.
+4. **ADR-004 Audit by default.** Money-moving actions and balance changes are written to audit records.
+5. **ADR-005 SeevCash as anchor.** Fiatsend integrates with SeevCash as a SEP client for USDC to GHS, which is faster to production in Ghana than operating anchor infrastructure.
+6. **ADR-006 Programmatic SEP-6 for mobile cash-out.** KYC and quotes are handled on the app's own screens instead of a hosted form, so the flow stays native and reliable.
+7. **ADR-007 SEP-53 signed-message wallet binding.** Proves control of the account without a transaction; Albedo excluded in the console because it cannot sign messages.
+8. **ADR-008 Verification inside the Partner API.** The API that owns payment intents verifies payments directly against Horizon, with a one-minute reconciliation job.
+9. **ADR-009 Pooled treasury with memos.** One treasury account per segment with memo-addressed balances (consumer and partner ranges kept apart), including for SDP receivers through a Fiatsend patch to SDP.
+10. **ADR-010 Server-held consumer wallets.** The mobile app signs nothing on the device; the server checks the PIN and keys are wrapped with Cloud KMS.
